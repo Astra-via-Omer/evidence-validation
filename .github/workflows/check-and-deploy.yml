@@ -43,6 +43,8 @@ jobs:
           trap 'docker logs ev-smoke; docker rm -f ev-smoke >/dev/null' EXIT
           curl --fail --retry 10 --retry-connrefused --retry-all-errors --max-time 3 --retry-delay 2 http://127.0.0.1:8080/healthz
           curl --fail http://127.0.0.1:8080/ | grep -q 'Evidence Validation'
+          curl --fail http://127.0.0.1:8080/how-it-works | grep -q 'Evidence Validation'
+          curl --fail http://127.0.0.1:8080/workflow.js | grep -q 'From a claim to a review and a ledger record'
       - name: Save checked image
         if: github.ref == 'refs/heads/main'
         run: docker save "evidence-validation:$GITHUB_SHA" | gzip > "$RUNNER_TEMP/evidence-validation-image.tar.gz"

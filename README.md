@@ -19,6 +19,7 @@ Apply `supabase/migrations/202610040001_evidence_validation.sql` to the **existi
 ## Pilot features
 
 - Welcome page, responsive workspace, and clearly marked sample evidence.
+- Public `/how-it-works` guide with an interactive eight-step claim-to-ledger flow, also available on the welcome page and in workspace navigation. Planned Web3 stages are explicitly labeled.
 - Shared Astra email/password accounts, confirmation/recovery through existing Supabase Auth, HttpOnly access/refresh cookies, and account disablement checks.
 - Private immutable drafts, operator-opened public unpaid tasks, one independent review per account/task, and blind reviews visible to their author and task owner.
 - Hashed, scoped API credentials with expiry up to 90 days and revocation. API credentials cannot manage credentials.

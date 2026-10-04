@@ -187,6 +187,7 @@ app.post('/mcp', authenticate, async (req, res, next) => {
 });
 app.all('/mcp', (req, res) => res.status(405).json({ error: 'Use POST for stateless MCP requests' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Endpoint not found' }));
+app.get('/how-it-works', (req, res) => res.sendFile('index.html', { root: fileURLToPath(new URL('../public', import.meta.url)) }));
 app.use(express.static(fileURLToPath(new URL('../public', import.meta.url))));
 app.use((error, req, res, next) => {
   if (res.headersSent) return next(error);

@@ -3,3 +3,37 @@
 
 .credentials-panel{margin-top:24px}
 .topnav>button{white-space:nowrap}
+
+.workflow-guide{margin-top:56px;padding-top:36px;border-top:1px solid var(--line);--flow-font:14px}
+.workflow-guide h2{font-size:clamp(24px,3vw,34px);font-weight:500;letter-spacing:-.8px;margin:14px 0}
+.workflow-intro,.workflow-note{color:var(--muted);font-size:14px;line-height:1.7;max-width:820px}
+.workflow-stephead{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:28px 0 10px;font-size:14px}
+#ev-number{font-family:monospace;color:var(--mint)}
+.workflow-legend{display:flex;flex-wrap:wrap;gap:10px 24px;color:var(--muted);font-size:12px;margin:12px 0}
+.workflow-action{line-height:1.7;font-size:14px;min-height:48px;margin:18px 0}
+.workflow-controls{display:flex;gap:12px;flex-wrap:wrap}
+.workflow-controls button:disabled{cursor:default}
+.workflow-note{margin-top:26px}
+.workflow-page{max-width:1120px;margin:auto;padding:20px 6vw 64px}
+.workflow-page .workflow-guide{margin-top:18px;border-top:0;padding-top:24px}
+@media(max-width:720px){.workflow-guide{margin-top:32px;padding-top:28px}.workflow-page{padding:16px 20px 44px}.workflow-stephead{gap:10px}.topbar .topnav{gap:10px}.topbar .how-link{font-size:12px}}
+
+#ev-workflow {color:var(--ink)}
+#ev-workflow .ev-stephead {margin:12px 0 4px}
+#ev-workflow strong {font-weight:500}
+#ev-workflow .ev-legend {gap:12px;margin:4px 0 10px;color:var(--muted)}
+#ev-workflow .ev-action {margin:12px 0;min-height:42px}
+#ev-workflow #ev-diagram {width:100%}
+#ev-workflow .ev-svg {width:100%;display:block;overflow:visible}
+#ev-workflow .ev-svg text {fill:var(--ink);font-size:var(--flow-font);font-weight:400}
+#ev-workflow .ev-svg .ev-sub {fill:var(--muted);font-size:var(--flow-font)}
+#ev-workflow .ev-svg .ev-node {fill:var(--panel);stroke:var(--line);stroke-width:1}
+#ev-workflow .ev-svg .ev-node.active {fill:color-mix(in srgb,var(--mint) 13%,var(--bg));stroke:var(--mint)}
+#ev-workflow .ev-svg .ev-edge {fill:none;stroke:var(--line);stroke-width:1.5}
+#ev-workflow .ev-svg .ev-edge.active {stroke:var(--mint);stroke-width:2}
+#ev-workflow .ev-svg .future {stroke-dasharray:5 5}
+#ev-workflow .ev-svg .ev-line-label {fill:var(--muted);font-size:var(--flow-font)}
+@media(max-width:720px){.topbar .topnav>.btn{display:none}}
+@media(max-width:420px){.topbar{height:auto;min-height:75px;gap:16px;padding:18px 20px;flex-wrap:wrap}}
+
+.topbar a.brand{color:var(--ink);text-decoration:none}

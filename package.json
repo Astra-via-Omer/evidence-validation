@@ -10,7 +10,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/server.js && node --check public/app.js && npm test"
+    "check": "node --check src/server.js && node --check public/app.js && node --check public/workflow.js && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
