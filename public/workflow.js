@@ -13,7 +13,7 @@ export function workflowMarkup() {
  <p id="ev-action" class="workflow-action" aria-live="polite"></p>
  <div class="workflow-controls"><button class="btn" id="ev-prev" type="button">Previous step</button><button class="btn primary" id="ev-next" type="button">Next step</button></div>
  </div>
- <p class="workflow-note">Sign in with your existing Astra account. Evidence records are awaiting setup; distributed storage, ledger proofs, and payouts are planned. A ledger preserves provenance and transactions, rather than proving that a claim is true.</p>
+ <p class="workflow-note">Sign in with your existing Astra account. Evidence tasks, independent pilot reviews, and bundle exports are available. Distributed storage, ledger proofs, and payouts are planned. A ledger preserves provenance and transactions, rather than proving that a claim is true.</p>
  <div class="actions"><button class="textbtn" data-action="demo">Explore a sample task →</button></div>
  </section>`;
 }
@@ -27,11 +27,11 @@ export function mountWorkflow(feeBps = 1000) {
  const dollars=cents=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(cents/100);
  const steps=[
   {title:'Sign in with your Astra account',state:'Available',nodes:['people','service','db'],edges:['input','auth'],action:'You: choose Log in and use the same email and password you use in Astra Lab.'},
-  {title:'Create an evidence task',state:'Setup pending',nodes:['people','service','db'],edges:['input','auth'],action:'You: choose New task; enter the claim, exact quote, source URL, page, relationship, and proposed budget.'},
-  {title:'Open an unpaid pilot task',state:'Operator action · setup pending',nodes:['db','service','reviewers'],edges:['auth','review'],action:'Operator: open an eligible public draft in Supabase. This does not fund the task.'},
-  {title:'Review the source independently',state:'Pilot · setup pending',nodes:['reviewers','service','db'],edges:['review','auth'],action:'Reviewer: open the source, compare the quote with the claim, explain the verdict, and declare conflicts.'},
-  {title:'Inspect the evidence and reviews',state:'Pilot · setup pending',nodes:['people','service','db'],edges:['input','auth'],action:'You: open the task and export its accessible reviews. Other reviewers’ submissions remain blind to reviewers.'},
-  {title:'Export a reproducible evidence bundle',state:'Pilot · setup pending',nodes:['service','bundle'],edges:['export'],action:'You: choose Export evidence bundle to download the JSON record and its SHA-256 digest.'},
+  {title:'Create an evidence task',state:'Available',nodes:['people','service','db'],edges:['input','auth'],action:'You: choose New task; enter the claim, exact quote, source URL, page, relationship, and proposed budget.'},
+  {title:'Open an unpaid pilot task',state:'Operator action',nodes:['db','service','reviewers'],edges:['auth','review'],action:'Operator: open an eligible public draft in Supabase. This does not fund the task.'},
+  {title:'Review the source independently',state:'Available · pilot',nodes:['reviewers','service','db'],edges:['review','auth'],action:'Reviewer: open the source, compare the quote with the claim, explain the verdict, and declare conflicts.'},
+  {title:'Inspect the evidence and reviews',state:'Available · pilot',nodes:['people','service','db'],edges:['input','auth'],action:'You: open the task and export its accessible reviews. Other reviewers’ submissions remain blind to reviewers.'},
+  {title:'Export a reproducible evidence bundle',state:'Available · pilot',nodes:['service','bundle'],edges:['export'],action:'You: choose Export evidence bundle to download the JSON record and its SHA-256 digest.'},
   {title:'Publish content and anchor its hash',state:'Planned · not connected',nodes:['bundle','storage','ledger'],edges:['publish','anchor'],action:'Planned: inspect the content address and ledger transaction; compare the stored bundle with the anchored hash.'},
   {title:'Settle an accepted review',state:'Planned · no payments live',nodes:['people','reviewers','ledger'],edges:[],action:`Planned: inspect acceptance and payout receipts. Illustrative $20 quote: ${dollars(2000-fee)} reviewer / ${dollars(fee)} Astra-Via at ${feeBps/100}%.`}
  ];
@@ -54,7 +54,7 @@ export function mountWorkflow(feeBps = 1000) {
   const h=index===6?(narrow?440:430):index===7?(narrow?560:530):(narrow?760:530);
   const svg=el('svg',{viewBox:`0 0 ${w} ${h}`,class:'ev-svg',role:'img','aria-labelledby':'ev-diagram-title ev-diagram-desc'});
   svg.append(el('title',{id:'ev-diagram-title'},`Evidence Validation workflow: ${step.title}`));
-  svg.append(el('desc',{id:'ev-diagram-desc'},'Astra Lab, other products, and independent reviewers interact with Evidence Validation. Existing Supabase supplies shared authentication and evidence records. Bundles can be exported. Distributed storage and ledger proofs and payouts are planned. Evidence records still require setup.'));
+  svg.append(el('desc',{id:'ev-diagram-desc'},'Astra Lab, other products, and independent reviewers interact with Evidence Validation. Existing Supabase supplies shared authentication and evidence records. Bundles can be exported. Distributed storage and ledger proofs and payouts are planned.'));
   const defs=el('defs');
   const marker=el('marker',{id:'ev-arrow',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:6,markerHeight:6,orient:'auto-start-reverse'});
   marker.append(el('path',{d:'M0 1L9 5L0 9Z',fill:'var(--border)'}));defs.append(marker);
@@ -67,8 +67,8 @@ export function mountWorkflow(feeBps = 1000) {
    people:['Astra Lab / other products','People: UI · applications: API/MCP'],
    reviewers:['Independent reviewers','People or external AI processes'],
    service:['Evidence Validation','Tasks · reviews · scoped access'],
-   db:['Existing Astra Supabase','Shared accounts · records setup pending'],
-   bundle:['Evidence bundle','JSON + SHA-256 · after setup'],
+   db:['Existing Astra Supabase','Shared accounts · evidence records'],
+   bundle:['Evidence bundle','JSON + SHA-256'],
    storage:['Distributed storage','IPFS / chosen network · planned'],
    ledger:['Web3 ledger','Hash proofs + settlement · planned']
   };
