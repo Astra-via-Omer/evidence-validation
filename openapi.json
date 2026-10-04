@@ -15,7 +15,7 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Scoped evk_ credential or PocketBase user token"
+        "description": "Scoped evk_ credential or existing Astra Supabase access token"
       }
     },
     "schemas": {

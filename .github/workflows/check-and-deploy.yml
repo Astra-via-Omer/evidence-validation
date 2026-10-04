@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       security_reviewed:
-        description: Confirm identity hosting, secrets, IAM, and ingress prerequisites are ready
+        description: Confirm existing Supabase migration, secrets, and ingress prerequisites are ready
         type: boolean
         required: true
         default: false
@@ -35,37 +35,11 @@ jobs:
           npm ci
           npm audit --omit=dev --audit-level=high
           npm run check
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Astra-via-Omer/evidence-validation-identity
-          ref: 14a4de657572c1551185eff1131159e80b78f580
-          path: .identity-check
-          persist-credentials: false
-      - name: Verify account isolation and MCP against PocketBase
-        run: |
-          mkdir -p "$RUNNER_TEMP/ev-pb"
-          cd "$RUNNER_TEMP/ev-pb"
-          curl -fsSL https://github.com/pocketbase/pocketbase/releases/download/v0.40.4/pocketbase_0.40.4_linux_amd64.zip -o pocketbase_0.40.4_linux_amd64.zip
-          curl -fsSL https://github.com/pocketbase/pocketbase/releases/download/v0.40.4/checksums.txt -o checksums.txt
-          awk '$2 == "pocketbase_0.40.4_linux_amd64.zip" { print }' checksums.txt > selected-checksum.txt
-          test -s selected-checksum.txt
-          sha256sum -c selected-checksum.txt
-          unzip pocketbase_0.40.4_linux_amd64.zip pocketbase
-          ./pocketbase migrate up --dir=./data --migrationsDir="$GITHUB_WORKSPACE/.identity-check/pb_migrations"
-          test_password=$(openssl rand -hex 24)
-          echo "::add-mask::$test_password"
-          ./pocketbase superuser upsert ci-admin@example.org "$test_password" --dir=./data
-          ./pocketbase serve --http=127.0.0.1:8097 --dir=./data --migrationsDir="$GITHUB_WORKSPACE/.identity-check/pb_migrations" > "$RUNNER_TEMP/ev-pb.log" 2>&1 &
-          pb_pid=$!
-          trap 'kill "$pb_pid"' EXIT
-          curl --fail --retry 10 --retry-connrefused --retry-all-errors --max-time 3 --retry-delay 1 http://127.0.0.1:8097/api/health
-          cd "$GITHUB_WORKSPACE"
-          EV_TEST_POCKETBASE_URL=http://127.0.0.1:8097 EV_TEST_ADMIN_EMAIL=ci-admin@example.org EV_TEST_ADMIN_PASSWORD="$test_password" npm test
       - name: Build application image once
         run: docker build -t "evidence-validation:$GITHUB_SHA" .
       - name: Smoke-test checked image
         run: |
-          docker run --detach --name ev-smoke -p 127.0.0.1:8080:8080 -e APP_ORIGIN=https://example.test -e POCKETBASE_URL=http://127.0.0.1:8090 "evidence-validation:$GITHUB_SHA"
+          docker run --detach --name ev-smoke -p 127.0.0.1:8080:8080 -e APP_ORIGIN=https://example.test -e SUPABASE_URL=https://example.supabase.co -e SUPABASE_ANON_KEY=ci-publishable-placeholder "evidence-validation:$GITHUB_SHA"
           trap 'docker logs ev-smoke; docker rm -f ev-smoke >/dev/null' EXIT
           curl --fail --retry 10 --retry-connrefused --retry-all-errors --max-time 3 --retry-delay 2 http://127.0.0.1:8080/healthz
           curl --fail http://127.0.0.1:8080/ | grep -q 'Evidence Validation'
@@ -103,14 +77,14 @@ jobs:
           REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY }}
           RUNTIME_ACCOUNT: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
           APP_ORIGIN: ${{ vars.APP_ORIGIN }}
-          PB_URL: ${{ vars.POCKETBASE_URL }}
-          EMAIL_VERSION: ${{ vars.POCKETBASE_EMAIL_SECRET_VERSION }}
-          PASSWORD_VERSION: ${{ vars.POCKETBASE_PASSWORD_SECRET_VERSION }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          ADMIN_VERSION: ${{ vars.SUPABASE_ADMIN_SECRET_VERSION }}
         run: |
-          for variable in PROJECT REGION REPOSITORY RUNTIME_ACCOUNT APP_ORIGIN PB_URL EMAIL_VERSION PASSWORD_VERSION; do
+          for variable in PROJECT REGION REPOSITORY RUNTIME_ACCOUNT APP_ORIGIN SUPABASE_URL SUPABASE_ANON_KEY ADMIN_VERSION; do
             test -n "${!variable}" || { echo "Missing repository variable: $variable"; exit 1; }
           done
-          [[ "$APP_ORIGIN" == https://* && "$PB_URL" == https://* && "$EMAIL_VERSION" =~ ^[0-9]+$ && "$PASSWORD_VERSION" =~ ^[0-9]+$ ]]
+          [[ "$APP_ORIGIN" == https://* && "$SUPABASE_URL" == https://* && "$ADMIN_VERSION" =~ ^[0-9]+$ ]]
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
@@ -133,11 +107,13 @@ jobs:
           region: ${{ vars.GCP_REGION }}
           image: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPOSITORY }}/evidence-validation:${{ github.sha }}
           flags: '--no-invoker-iam-check --ingress=internal-and-cloud-load-balancing --timeout=60 --concurrency=8 --max-instances=1 --memory=512Mi --service-account=${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}'
+          env_vars_update_strategy: overwrite
+          secrets_update_strategy: overwrite
           env_vars: |
             APP_ORIGIN=${{ vars.APP_ORIGIN }}
-            POCKETBASE_URL=${{ vars.POCKETBASE_URL }}
+            SUPABASE_URL=${{ vars.SUPABASE_URL }}
+            SUPABASE_ANON_KEY=${{ vars.SUPABASE_ANON_KEY }}
             PLATFORM_FEE_BPS=1000
             TRUST_PROXY_HOPS=1
           secrets: |
-            POCKETBASE_SUPERUSER_EMAIL=ev-pocketbase-superuser-email:${{ vars.POCKETBASE_EMAIL_SECRET_VERSION }}
-            POCKETBASE_SUPERUSER_PASSWORD=ev-pocketbase-superuser-password:${{ vars.POCKETBASE_PASSWORD_SECRET_VERSION }}
+            SUPABASE_SERVICE_ROLE_KEY=astra-supabase-service-role:${{ vars.SUPABASE_ADMIN_SECRET_VERSION }}

@@ -1,42 +1,27 @@
 # Google deployment
 
-Target: evidence-validation.astra-via.com. The earlier atra-via spelling is awaiting confirmation; this configuration follows the requested *.astra-via.com convention.
+Application: `evidence-validation` in project `astra-via`, region `me-west1`, hosted on Cloud Run. Domain: `evidence-validation.astra-via.com`. Authentication and data use Astra Lab's existing Supabase project `bqwnljcztahgorhqhabp`.
 
-## Core application
+## Existing Supabase setup
 
-Deploy the supplied Dockerfile to Cloud Run. Set APP_ORIGIN to the final HTTPS origin and POCKETBASE_URL to the separately hosted identity service. The container is stateless and runs as a non-root user. `/healthz` checks the process, not the health of PocketBase or external providers.
+1. Apply `supabase/migrations/202610040001_evidence_validation.sql` to the existing project once. The migration is additive; it does not change existing Lab users or tables.
+2. Add `https://evidence-validation.astra-via.com` to the existing project's Auth redirect allowlist for verification/recovery emails. Retain existing redirect URLs and email-provider settings.
+3. Reuse `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and existing Secret Manager secret `astra-supabase-service-role`, numeric version 1. Only the Cloud Run runtime identity can read this secret. Do not create another auth service.
 
-The check-and-deploy workflow requires repository variables:
+## GitHub pipeline
 
-- GCP_PROJECT_ID, GCP_REGION, GCP_ARTIFACT_REPOSITORY (pre-created Artifact Registry repository)
-- GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_DEPLOY_SERVICE_ACCOUNT
-- GCP_RUNTIME_SERVICE_ACCOUNT
-- POCKETBASE_URL, APP_ORIGIN (HTTPS origins)
-- POCKETBASE_EMAIL_SECRET_VERSION, POCKETBASE_PASSWORD_SECRET_VERSION (numeric versions)
-- DEPLOY_ENABLED=true only after cloud prerequisites are verified
+Repository variables: `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_ARTIFACT_REPOSITORY`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`, `GCP_RUNTIME_SERVICE_ACCOUNT`, `APP_ORIGIN`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_ADMIN_SECRET_VERSION`, and `DEPLOY_ENABLED=true`.
 
-Create Secret Manager secrets `ev-pocketbase-superuser-email` and `ev-pocketbase-superuser-password`; give only the runtime service account access. Configure GitHub OIDC/Workload Identity Federation for this repository and environment. Enable Cloud Build, Artifact Registry, Cloud Run, and Secret Manager APIs and appropriate build/deploy/runtime IAM permissions. Do not commit service-account JSON keys.
+The workflow audits/tests source, builds once, smoke-tests the image, and deploys that exact image using repository-scoped Workload Identity Federation. Actions and numeric secret versions are pinned. Cloud Run ingress is restricted to internal traffic and the HTTPS load balancer, with max instances 1. The existing Astra invoker-IAM-disabled configuration is retained; Supabase sessions and scoped credentials authorize application requests.
 
-The workflow audits/tests source, builds one image, smoke-tests it, and transfers that exact checked image between jobs. It runs checks on pull requests and main pushes. Main deployment is enabled only when DEPLOY_ENABLED=true; manual deployment additionally requires the security_reviewed checkbox. It uses pinned action commits, Workload Identity Federation, numeric secret versions, and Cloud Run ingress restricted to the HTTPS load balancer, following the Astra Lab pipeline pattern. Deployment jobs are serialized. This workflow has deployed successfully to the astra-via project using a dedicated repository-scoped federation provider and deployment/runtime identities.
+`/healthz` tests the process, not database readiness. The public configuration endpoint reports Supabase configuration without exposing credentials. Production requires an HTTPS APP_ORIGIN and Supabase configuration. Rate limits are process-local; ingress-level limits are needed before scaling horizontally.
 
-Reuse the existing Google-managed HTTPS load balancer/certificate process after inspecting it. Configure separate hostname routing and certificate coverage; do not modify the Lab backend route. A certificate covering lab.astra-via.com alone does not automatically cover new hostnames. Use the same invoker-IAM-disabled pattern as the live Lab while restricting Cloud Run ingress to internal traffic and the HTTPS load balancer. PocketBase sessions and scoped credentials enforce application/API authorization. Google organization policy prevents granting allUsers; the workflow therefore uses --no-invoker-iam-check rather than an allUsers IAM binding. For the first public deployment, configure ingress-level throttling and protect PocketBase administrative access. For preview, use the exact HTTPS Cloud Run URL as APP_ORIGIN instead of the custom domain until DNS is ready.
+## HTTPS
 
-## Identity service
+The existing `astra-website-lb` routes `evidence-validation.astra-via.com` to `evidence-validation-backend`/`evidence-validation-neg`. Google-managed certificate `evidence-validation-cert` covers this hostname. Its DNS A record must point to `34.49.17.123` before issuance finishes. Existing Lab and website routes/certificates are preserved.
 
-Use Compute Engine with persistent disk (or another durable VM), not an ephemeral Cloud Run filesystem. PocketBase uses SQLite and must retain its pb_data directory. Use one active writer instance, automated encrypted backups, and tested restoration. Configure HTTPS/reverse proxy, SMTP, email confirmation links, and restricted superuser access. See the separate identity README.
+## Removed identity deployment
 
-## Not deployable yet
+The redundant identity VM/disk, instance group, backend, health check, firewall rules, backups, certificate, hostname route, deployment/runtime accounts, federation provider, and identity secrets are removed. The identity workflow is disabled and its repository retired. No `identity.astra-via.com` DNS record is required.
 
-Storage networks and payment settlement have no configured providers. Do not enable paid tasks by changing a status field. The current task states intentionally have no paid/funded state. Production NODE_ENV only requires secure origin and identity configuration; it does not assert financial readiness.
-
-## Local verification result
-
-The PocketBase migration, five contract/integration tests, real MCP client calls, and desktop/mobile UI checks passed locally. npm audit reported no known dependency vulnerabilities. Container image builds were not verified because the local Docker daemon was unavailable. Google deployment has run; DNS and new-domain certificate activation remain pending.
-
-## Provisioned resources
-
-Project astra-via; region me-west1. Application: Cloud Run evidence-validation. Identity: Compute Engine evidence-validation-identity in me-west1-a, e2-small, no external IP, persistent 20 GB boot disk retained on instance deletion. HTTPS load balancer astra-website-lb has separate host routes for evidence-validation.astra-via.com and identity.astra-via.com. Existing Lab/website routes and certificates are preserved.
-
-New Google-managed certificates: evidence-validation-cert and evidence-identity-cert. Both hostnames need A records to 34.49.17.123 in the existing registrar DNS before certificate issuance completes. Certificates are not yet active. SMTP is not configured, so email verification/reset delivery requires a mail provider before open registration is useful.
-
-Secret Manager stores the dedicated PocketBase superuser credentials at numeric version 1; values are never stored in GitHub. Daily identity disk snapshots at 23:00 UTC retain seven days; each container replacement additionally creates a cold local backup. Persistent records were verified across a real container restart. Snapshot restore drills are not yet completed.
+Payments and distributed storage remain unconnected. Deployment does not enable funded tasks or payouts.

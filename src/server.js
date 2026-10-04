@@ -1,7 +1,8 @@
 import express from 'express';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
-import PocketBase from 'pocketbase';
+import { createClient } from '@supabase/supabase-js';
+import { database } from './supabase.js';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -11,11 +12,12 @@ import { jobSchema, reviewSchema, keySchema, splitFee, digest } from './contract
 
 const app = express();
 const origin = process.env.APP_ORIGIN || 'http://localhost:3200';
-const pbUrl = process.env.POCKETBASE_URL;
+const supabaseUrl = process.env.SUPABASE_URL;
+const anonKey = process.env.SUPABASE_ANON_KEY;
 const feeBps = Number(process.env.PLATFORM_FEE_BPS || 1000);
 splitFee(0, feeBps);
 const secure = new URL(origin).protocol === 'https:';
-if (process.env.NODE_ENV === 'production' && (!secure || !pbUrl)) throw new Error('Production requires HTTPS APP_ORIGIN and POCKETBASE_URL');
+if (process.env.NODE_ENV === 'production' && (!secure || (!supabaseUrl || !anonKey))) throw new Error('Production requires HTTPS APP_ORIGIN and SUPABASE_URL and SUPABASE_ANON_KEY');
 app.disable('x-powered-by');
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 0));
 app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'"], imgSrc: ["'self'", 'data:'], connectSrc: ["'self'"], objectSrc: ["'none'"], frameAncestors: ["'none'"] } } }));
@@ -23,43 +25,57 @@ app.use(express.json({ limit: '128kb' }));
 app.use(['/api', '/mcp'], rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false }));
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60000, limit: 25 }));
 const fail = (status, message) => Object.assign(new Error(message), { status });
-const pbClient = () => { if (!pbUrl) throw fail(503, 'PocketBase is not configured. Explore the sample workspace or configure the identity service.'); const pb = new PocketBase(pbUrl); pb.autoCancellation(false); return pb; };
-function cookieToken(req) { const match = (req.headers.cookie || '').split(';').map(v => v.trim()).find(v => v.startsWith('ev_session=')); return match ? decodeURIComponent(match.slice(11)) : ''; }
-function setCookie(res, token) { res.cookie('ev_session', token, { httpOnly: true, secure, sameSite: 'strict', path: '/', maxAge: 3600000 }); }
+const authClient = () => { if (!supabaseUrl || !anonKey) throw fail(503, 'Supabase is not configured'); return createClient(supabaseUrl, anonKey, { auth: { persistSession: false, autoRefreshToken: false } }); };
+const userView = u => ({ id: u.id, name: u.user_metadata?.name || u.user_metadata?.full_name || u.email, email: u.email, verified: !!u.email_confirmed_at });
+async function result(promise) { const { data, error } = await promise; if (error) throw fail(error.status || 400, 'Supabase operation failed'); return data; }
+function cookieToken(req, name = 'ev_session') { const match = (req.headers.cookie || '').split(';').map(v => v.trim()).find(v => v.startsWith(`${name}=`)); return match ? decodeURIComponent(match.slice(name.length + 1)) : ''; }
+function setCookie(res, session) { const opts = { httpOnly: true, secure, sameSite: 'strict', path: '/' }; res.cookie('ev_session', session.access_token, { ...opts, maxAge: session.expires_in * 1000 }); res.cookie('ev_refresh', session.refresh_token, { ...opts, maxAge: 30 * 86400000 }); }
 app.use(['/api', '/mcp'], (req, res, next) => {
   res.set('Cache-Control', 'no-store');
   if (req.headers.origin && req.headers.origin !== origin) return next(fail(403, 'Origin is not allowed'));
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && cookieToken(req) && req.headers.origin !== origin) return next(fail(403, 'A same-origin request is required'));
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && (cookieToken(req) || cookieToken(req, 'ev_refresh')) && req.headers.origin !== origin) return next(fail(403, 'A same-origin request is required'));
   next();
 });
-async function adminClient() {
-  if (!process.env.POCKETBASE_SUPERUSER_EMAIL || !process.env.POCKETBASE_SUPERUSER_PASSWORD) throw fail(503, 'API credentials are not configured on this server');
-  const pb = pbClient();
-  await pb.collection('_superusers').authWithPassword(process.env.POCKETBASE_SUPERUSER_EMAIL, process.env.POCKETBASE_SUPERUSER_PASSWORD);
-  return pb;
+function adminClient() {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) throw fail(503, 'Integration credentials are not configured');
+  return createClient(supabaseUrl, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+function checkAccount(user) {
+  if (user.app_metadata?.disabled === true || (user.banned_until && Date.parse(user.banned_until) > Date.now())) throw fail(403, 'Your Astra account is disabled');
 }
 async function authenticate(req, res, next) {
   try {
     const bearer = /^Bearer (.+)$/.exec(req.headers.authorization || '')?.[1];
-    let pb = pbClient();
     if (bearer?.startsWith('evk_')) {
-      const admin = await adminClient();
-      const key = await admin.collection('ev_api_keys').getFirstListItem(admin.filter('tokenHash = {:hash}', { hash: digest(bearer) }));
-      if (key.revoked || !key.expiresAt || Date.parse(key.expiresAt) <= Date.now()) throw fail(401, 'API credential has expired or was revoked');
-      const user = await admin.collection('ev_users').getOne(key.owner);
-      if (!user.verified) throw fail(403, 'Verify your email before using integrations');
-      // Impersonation uses PocketBase record rules for all business operations.
-      const session = await admin.collection('ev_users').impersonate(user.id, 300);
-      pb = session;
-      req.principal = { user, scopes: key.scopes, keyId: key.id };
+      const admin = adminClient();
+      const { data: key, error } = await admin.from('ev_api_keys').select('*').eq('tokenHash', digest(bearer)).single();
+      if (error || !key || key.revoked || Date.parse(key.expiresAt) <= Date.now()) throw fail(401, 'API credential has expired or was revoked');
+      const user = (await result(admin.auth.admin.getUserById(key.owner))).user;
+      checkAccount(user);
+      if (!user.email_confirmed_at) throw fail(403, 'Verify your email before using integrations');
+      req.principal = { user: userView(user), scopes: key.scopes, keyId: key.id };
+      req.db = database(admin, user.id);
     } else {
-      const token = bearer || cookieToken(req);
-      if (!token) throw fail(401, 'Sign in to continue');
-      pb.authStore.save(token, null);
-      const auth = await pb.collection('ev_users').authRefresh();
-      req.principal = { user: auth.record, scopes: null };
+      let token = bearer || cookieToken(req);
+      if (!token && !cookieToken(req, 'ev_refresh')) throw fail(401, 'Sign in to continue');
+      const auth = authClient();
+      let refreshToken = cookieToken(req, 'ev_refresh');
+      let account = token ? await auth.auth.getUser(token) : { error: true };
+      if (account.error && !bearer && cookieToken(req, 'ev_refresh')) {
+        const refreshed = await result(auth.auth.refreshSession({ refresh_token: cookieToken(req, 'ev_refresh') }));
+        token = refreshed.session.access_token;
+        refreshToken = refreshed.session.refresh_token;
+        setCookie(res, refreshed.session);
+        account = await auth.auth.getUser(token);
+      }
+      if (account.error || !account.data?.user) throw fail(401, 'Sign in to continue');
+      const user = account.data.user;
+      checkAccount(user);
+      req.principal = { user: userView(user), scopes: null };
+      req.accessToken = token; req.refreshToken = refreshToken;
+      const db = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: `Bearer ${token}` } }, auth: { persistSession: false, autoRefreshToken: false } });
+      req.db = database(db, user.id);
     }
-    req.pb = pb;
     next();
   } catch (error) { next(error.status ? error : fail(401, 'Authentication failed')); }
 }
@@ -67,52 +83,72 @@ function permit(req, scope) { if (req.principal.scopes && !req.principal.scopes.
 function browserOnly(req) { if (req.principal.scopes) throw fail(403, 'Manage credentials in your signed-in account'); }
 function verified(req) { if (!req.principal.user.verified) throw fail(403, 'Verify your email before creating records'); }
 const publicJob = j => ({ id: j.id, title: j.title, claim: j.claim, quote: j.quote, sourceUrl: j.sourceUrl, location: j.location, relationship: j.relationship, visibility: j.visibility, status: j.status, owner: j.owner, fee: splitFee(j.rewardCents, j.feeBps), created: j.created });
-async function listJobs(req) { permit(req, 'jobs:read'); return (await req.pb.collection('ev_jobs').getList(1, 50, { sort: '-created' })).items.map(publicJob); }
+async function listJobs(req) { permit(req, 'jobs:read'); return (await req.db.collection('ev_jobs').getList(1, 50, { sort: '-created' })).items.map(publicJob); }
 async function createJob(req, input) {
   permit(req, 'jobs:write'); verified(req);
   const data = jobSchema.parse(input);
-  return publicJob(await req.pb.collection('ev_jobs').create({ ...data, owner: req.principal.user.id, status: 'draft', feeBps }));
+  return publicJob(await req.db.collection('ev_jobs').create({ ...data, owner: req.principal.user.id, status: 'draft', feeBps }));
 }
 async function submitReview(req, id, input) {
   permit(req, 'reviews:write'); verified(req);
   const data = reviewSchema.parse(input);
-  const job = await req.pb.collection('ev_jobs').getOne(id);
+  const job = await req.db.collection('ev_jobs').getOne(id);
   if (job.owner === req.principal.user.id) throw fail(403, 'You cannot validate your own task');
   if (job.status !== 'open') throw fail(409, 'This task is not open for review');
-  const record = await req.pb.collection('ev_reviews').create({ ...data, job: id, reviewer: req.principal.user.id, status: 'submitted' });
+  const record = await req.db.collection('ev_reviews').create({ ...data, job: id, reviewer: req.principal.user.id, status: 'submitted' });
   return { id: record.id, status: record.status, message: 'Review submitted. No payment has been initiated.' };
 }
 async function bundle(req, id) {
   permit(req, 'bundles:read');
-  const job = publicJob(await req.pb.collection('ev_jobs').getOne(id));
-  const result = await req.pb.collection('ev_reviews').getList(1, 100, { filter: req.pb.filter('job = {:id}', { id }), sort: 'created,id' });
+  const job = publicJob(await req.db.collection('ev_jobs').getOne(id));
+  const result = await req.db.collection('ev_reviews').getList(1, 100, { filter: req.db.filter('job = {:id}', { id }), sort: 'created,id' });
   const reviews = result.items.map(r => ({ id: r.id, reviewer: r.reviewer, verdict: r.verdict, quote: r.quote, location: r.location, reasoning: r.reasoning, status: r.status }));
   const payload = { schema: 'evidence-validation/bundle/v1', job, reviews, coverage: { accessibleReviews: result.totalItems, includedReviews: reviews.length, completeForThisAccount: result.totalItems === reviews.length } };
   return { payload, sha256: digest(payload), publication: 'not_published', signature: null };
 }
 app.get('/healthz', (req, res) => res.json({ status: 'ok' }));
-app.get('/api/config', (req, res) => res.json({ name: 'evidence-validation', pocketbaseConfigured: !!pbUrl, feeBps, storage: 'not_connected', payments: 'not_connected', mcp: '/mcp', api: '/api/v1', capabilities: ['drafts', 'pilot_reviews', 'bundle_export', 'scoped_credentials'] }));
+app.get('/api/config', (req, res) => res.json({ name: 'evidence-validation', supabaseConfigured: !!supabaseUrl && !!anonKey, authentication: 'supabase', feeBps, storage: 'not_connected', payments: 'not_connected', mcp: '/mcp', api: '/api/v1', capabilities: ['drafts', 'pilot_reviews', 'bundle_export', 'scoped_credentials'] }));
 app.post('/api/auth/register', async (req, res) => {
   const data = z.object({ email: z.string().email().max(254), name: z.string().trim().min(2).max(100), password: z.string().min(12).max(128) }).strict().parse(req.body);
-  const pb = pbClient();
-  await pb.collection('ev_users').create({ ...data, passwordConfirm: data.password });
-  let message = 'Account created. Check your email to verify your account before creating tasks or credentials.';
-  try { await pb.collection('ev_users').requestVerification(data.email); }
-  catch { message = 'Account created, but verification email delivery is unavailable. Contact the service operator; do not register again.'; }
-  res.status(201).json({ message });
+  const auth = await result(authClient().auth.signUp({ email: data.email, password: data.password, options: { data: { name: data.name }, emailRedirectTo: origin } }));
+  res.status(201).json({ message: 'Use your existing Astra account, or check your email to confirm your new account, then sign in.' });
 });
 app.post('/api/auth/login', async (req, res) => {
   const data = z.object({ email: z.string().email(), password: z.string().min(1).max(128) }).strict().parse(req.body);
-  const pb = pbClient();
-  try { const auth = await pb.collection('ev_users').authWithPassword(data.email, data.password); setCookie(res, auth.token); res.json({ user: { id: auth.record.id, name: auth.record.name, email: auth.record.email, verified: auth.record.verified } }); }
-  catch { throw fail(401, 'Email or password is incorrect'); }
+  const { data: auth, error } = await authClient().auth.signInWithPassword(data);
+  if (error || !auth.session) throw fail(401, 'Email or password is incorrect');
+  checkAccount(auth.user);
+  setCookie(res, auth.session);
+  res.json({ user: userView(auth.user) });
 });
-app.post('/api/auth/logout', (req, res) => { res.clearCookie('ev_session', { httpOnly: true, secure, sameSite: 'strict', path: '/' }); res.json({ ok: true }); });
+app.post('/api/auth/logout', async (req, res) => {
+  // Revoke only this login's refresh session; other Astra sessions remain active.
+  const access_token = cookieToken(req), refresh_token = cookieToken(req, 'ev_refresh');
+  if (access_token && refresh_token) {
+    const auth = authClient();
+    const { error } = await auth.auth.setSession({ access_token, refresh_token });
+    if (!error) await auth.auth.signOut({ scope: 'local' });
+  }
+  for (const name of ['ev_session', 'ev_refresh']) res.clearCookie(name, { httpOnly: true, secure, sameSite: 'strict', path: '/' }); res.json({ ok: true });
+});
 app.post('/api/auth/reset', async (req, res) => {
   const email = z.string().email().parse(req.body.email);
-  const pb = pbClient();
-  await pb.collection('ev_users').requestPasswordReset(email).catch(() => {});
-  res.json({ message: 'If the account exists, a password reset email has been requested.' });
+  await authClient().auth.resetPasswordForEmail(email, { redirectTo: origin });
+  res.json({ message: 'If the account exists, a password reset email has been requested through Astra authentication.' });
+});
+app.post('/api/auth/session', async (req, res) => {
+  const data = z.object({ access_token: z.string().min(20).max(8192), refresh_token: z.string().min(10).max(8192) }).strict().parse(req.body);
+  const { data: auth, error } = await authClient().auth.setSession(data);
+  if (error || !auth.session || !auth.user) throw fail(401, 'The email link is invalid or expired');
+  checkAccount(auth.user); setCookie(res, auth.session); res.json({ user: userView(auth.user) });
+});
+app.post('/api/auth/password', authenticate, async (req, res) => {
+  browserOnly(req);
+  const password = z.string().min(12).max(128).parse(req.body.password);
+  const auth = authClient();
+  await result(auth.auth.setSession({ access_token: req.accessToken, refresh_token: req.refreshToken }));
+  await result(auth.auth.updateUser({ password }));
+  res.json({ message: 'Your Astra account password has been updated.' });
 });
 app.get('/api/me', authenticate, (req, res) => { const u = req.principal.user; res.json({ user: { id: u.id, name: u.name, email: u.email, verified: u.verified } }); });
 app.get('/api/v1/jobs', authenticate, async (req, res) => res.json({ items: await listJobs(req) }));
@@ -121,21 +157,21 @@ app.post('/api/v1/jobs/:id/reviews', authenticate, async (req, res) => res.statu
 app.get('/api/v1/jobs/:id/bundle', authenticate, async (req, res) => res.json(await bundle(req, req.params.id)));
 app.get('/api/keys', authenticate, async (req, res) => {
   browserOnly(req);
-  const keys = await req.pb.collection('ev_api_keys').getList(1, 50, { sort: '-created' });
+  const keys = await req.db.collection('ev_api_keys').getList(1, 50, { sort: '-created' });
   res.json({ items: keys.items.map(k => ({ id: k.id, name: k.name, scopes: k.scopes, expiresAt: k.expiresAt, revoked: k.revoked })) });
 });
 app.post('/api/keys', authenticate, async (req, res) => {
   browserOnly(req); verified(req); const data = keySchema.parse(req.body);
   const admin = await adminClient();
   const token = 'evk_' + randomBytes(32).toString('hex');
-  const record = await admin.collection('ev_api_keys').create({ owner: req.principal.user.id, name: data.name, scopes: [...new Set(data.scopes)], tokenHash: digest(token), expiresAt: new Date(Date.now() + data.expiresDays * 86400000).toISOString(), revoked: false });
+  const record = await database(admin, req.principal.user.id).collection('ev_api_keys').create({ owner: req.principal.user.id, name: data.name, scopes: [...new Set(data.scopes)], tokenHash: digest(token), expiresAt: new Date(Date.now() + data.expiresDays * 86400000).toISOString(), revoked: false });
   res.status(201).json({ id: record.id, token, expiresAt: record.expiresAt });
 });
 app.delete('/api/keys/:id', authenticate, async (req, res) => {
   browserOnly(req);
-  await req.pb.collection('ev_api_keys').getOne(req.params.id);
+  await req.db.collection('ev_api_keys').getOne(req.params.id);
   const admin = await adminClient();
-  await admin.collection('ev_api_keys').update(req.params.id, { revoked: true });
+  await database(admin, req.principal.user.id).collection('ev_api_keys').update(req.params.id, { revoked: true });
   res.json({ ok: true });
 });
 app.post('/mcp', authenticate, async (req, res, next) => {
