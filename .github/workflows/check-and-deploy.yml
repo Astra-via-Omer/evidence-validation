@@ -108,7 +108,7 @@ jobs:
           service: evidence-validation
           region: ${{ vars.GCP_REGION }}
           image: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPOSITORY }}/evidence-validation:${{ github.sha }}
-          flags: '--no-invoker-iam-check --ingress=internal-and-cloud-load-balancing --timeout=60 --concurrency=8 --max-instances=1 --memory=512Mi --service-account=${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}'
+          flags: '--no-invoker-iam-check --ingress=internal-and-cloud-load-balancing --timeout=60 --concurrency=8 --max-instances=1 --memory=512Mi --service-account=${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }} --network=astra-vpc --subnet=astra-subnet --vpc-egress=private-ranges-only'
           env_vars_update_strategy: overwrite
           secrets_update_strategy: overwrite
           env_vars: |
@@ -117,5 +117,7 @@ jobs:
             SUPABASE_ANON_KEY=${{ vars.SUPABASE_ANON_KEY }}
             PLATFORM_FEE_BPS=1000
             TRUST_PROXY_HOPS=1
+            IPFS_BRIDGE_URL=http://10.21.0.2:8787
           secrets: |
             SUPABASE_SERVICE_ROLE_KEY=astra-supabase-service-role:${{ vars.SUPABASE_ADMIN_SECRET_VERSION }}
+            IPFS_BRIDGE_TOKEN=evidence-ipfs-bridge-token:1

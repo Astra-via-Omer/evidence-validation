@@ -79,7 +79,9 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
   assert.equal(logout.status,200);assert.match(logout.headers.get('set-cookie'),/ev_refresh=/);
   client=new Client({name:'ev-test',version:'1.0.0'});
   await client.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp'),{requestInit:{headers:{Authorization:'Bearer '+readKey}}}));
-  const tools=await client.listTools();assert.equal(tools.tools.length,4);
+  assert.equal((await request('/api/v1/jobs/'+keyId+'/publish',readKey,{method:'POST',body:JSON.stringify({confirmPublic:true})})).status,403);
+  assert.equal((await request('/api/v1/jobs/'+keyId+'/publish','good-jwt',{method:'POST',body:JSON.stringify({confirmPublic:true})})).status,409);
+  const tools=await client.listTools();assert.equal(tools.tools.length,5);
   const listed=await client.callTool({name:'list_review_tasks',arguments:{}});assert.equal(JSON.parse(listed.content[0].text)[0].id,keyId);
   const denied=await client.callTool({name:'create_review_task',arguments:input});assert.equal(denied.isError,true);assert.match(denied.content[0].text,/jobs:write/);
  } finally {await client?.close();await new Promise(r=>server.close(r));await new Promise(r=>upstreamServer.close(r));}

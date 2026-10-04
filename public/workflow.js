@@ -13,7 +13,7 @@ export function workflowMarkup() {
  <p id="ev-action" class="workflow-action" aria-live="polite"></p>
  <div class="workflow-controls"><button class="btn" id="ev-prev" type="button">Previous step</button><button class="btn primary" id="ev-next" type="button">Next step</button></div>
  </div>
- <p class="workflow-note">Sign in with your existing Astra account. Evidence tasks, independent pilot reviews, and bundle exports are available. Distributed storage, ledger proofs, and payouts are planned. A ledger preserves provenance and transactions, rather than proving that a claim is true.</p>
+ <p class="workflow-note">Sign in with your existing Astra account. Evidence tasks, independent pilot reviews, and bundle exports are available. Public IPFS publication is available. Ledger proofs and payouts are planned. A ledger preserves provenance and transactions, rather than proving that a claim is true.</p>
  <div class="actions"><button class="textbtn" data-action="demo">Explore a sample task →</button></div>
  </section>`;
 }
@@ -32,7 +32,7 @@ export function mountWorkflow(feeBps = 1000) {
   {title:'Review the source independently',state:'Available · pilot',nodes:['reviewers','service','db'],edges:['review','auth'],action:'Reviewer: open the source, compare the quote with the claim, explain the verdict, and declare conflicts.'},
   {title:'Inspect the evidence and reviews',state:'Available · pilot',nodes:['people','service','db'],edges:['input','auth'],action:'You: open the task and export its accessible reviews. Other reviewers’ submissions remain blind to reviewers.'},
   {title:'Export a reproducible evidence bundle',state:'Available · pilot',nodes:['service','bundle'],edges:['export'],action:'You: choose Export evidence bundle to download the JSON record and its SHA-256 digest.'},
-  {title:'Publish content and anchor its hash',state:'Planned · not connected',nodes:['bundle','storage','ledger'],edges:['publish','anchor'],action:'Planned: inspect the content address and ledger transaction; compare the stored bundle with the anchored hash.'},
+  {title:'Publish evidence to hosted IPFS',state:'IPFS available · ledger planned',nodes:['bundle','storage','ledger'],edges:['publish','anchor'],action:'Owner: open an eligible public task, choose Publish to IPFS, and approve publication. View the CID and stored bundle in Files & network. Ledger anchoring is planned.'},
   {title:'Settle an accepted review',state:'Planned · no payments live',nodes:['people','reviewers','ledger'],edges:[],action:`Planned: inspect acceptance and payout receipts. Illustrative $20 quote: ${dollars(2000-fee)} reviewer / ${dollars(fee)} Astra-Via at ${feeBps/100}%.`}
  ];
  let index=rememberedStep;
@@ -54,7 +54,7 @@ export function mountWorkflow(feeBps = 1000) {
   const h=index===6?(narrow?440:430):index===7?(narrow?560:530):(narrow?760:530);
   const svg=el('svg',{viewBox:`0 0 ${w} ${h}`,class:'ev-svg',role:'img','aria-labelledby':'ev-diagram-title ev-diagram-desc'});
   svg.append(el('title',{id:'ev-diagram-title'},`Evidence Validation workflow: ${step.title}`));
-  svg.append(el('desc',{id:'ev-diagram-desc'},'Astra Lab, other products, and independent reviewers interact with Evidence Validation. Existing Supabase supplies shared authentication and evidence records. Bundles can be exported. Distributed storage and ledger proofs and payouts are planned.'));
+  svg.append(el('desc',{id:'ev-diagram-desc'},'Astra Lab, other products, and independent reviewers interact with Evidence Validation. Existing Supabase supplies shared authentication and evidence records. Bundles can be exported. Hosted IPFS stores public bundles. Ledger proofs and payouts are planned.'));
   const defs=el('defs');
   const marker=el('marker',{id:'ev-arrow',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:6,markerHeight:6,orient:'auto-start-reverse'});
   marker.append(el('path',{d:'M0 1L9 5L0 9Z',fill:'var(--border)'}));defs.append(marker);
@@ -62,20 +62,20 @@ export function mountWorkflow(feeBps = 1000) {
   activeMarker.append(el('path',{d:'M0 1L9 5L0 9Z',fill:'var(--viz-series-1)'}));defs.append(activeMarker);svg.append(defs);
   const left=w*.255,right=w*.745;
   let positions=narrow?{people:[w/2,45],reviewers:[w/2,145],service:[w/2,250],db:[w/2,355],bundle:[w/2,460],storage:[w/2,565],ledger:[w/2,680]}:{people:[left,48],reviewers:[right,48],service:[w/2,180],db:[left,315],bundle:[right,315],storage:[left,465],ledger:[right,465]};
-  let edges=[['input','people','service',false],['review','reviewers','service',false],['auth','service','db',false],['export','service','bundle',false],['publish','bundle','storage',true],['anchor','bundle','ledger',true]];
+  let edges=[['input','people','service',false],['review','reviewers','service',false],['auth','service','db',false],['export','service','bundle',false],['publish','bundle','storage',false],['anchor','bundle','ledger',true]];
   let nodes={
    people:['Astra Lab / other products','People: UI · applications: API/MCP'],
    reviewers:['Independent reviewers','People or external AI processes'],
    service:['Evidence Validation','Tasks · reviews · scoped access'],
    db:['Existing Astra Supabase','Shared accounts · evidence records'],
    bundle:['Evidence bundle','JSON + SHA-256'],
-   storage:['Distributed storage','IPFS / chosen network · planned'],
+   storage:['Distributed storage','Hosted IPFS · public bundles'],
    ledger:['Web3 ledger','Hash proofs + settlement · planned']
   };
   if(index===6){
    positions=narrow?{bundle:[w/2,45],storage:[w/2,150],ledger:[w/2,255],viewer:[w/2,370]}:{bundle:[w/2,48],storage:[left,180],ledger:[right,180],viewer:[w/2,350]};
-   nodes={bundle:['Evidence bundle','Exact content + SHA-256 digest'],storage:['Distributed storage','Content address / CID · planned'],ledger:['Ledger record','Transaction ID + hash · planned'],viewer:['View proof · planned','Compare content, hash, and record']};
-   edges=[['publish','bundle','storage',true],['anchor','bundle','ledger',true],['content','storage','viewer',true],['proof','ledger','viewer',true]];
+   nodes={bundle:['Evidence bundle','Exact content + SHA-256 digest'],storage:['Distributed storage','Pinned content address / CID'],ledger:['Ledger record','Transaction ID + hash · planned'],viewer:['Inspect the publication','Open bundle · check CID and digest']};
+   edges=[['publish','bundle','storage',false],['anchor','bundle','ledger',true],['content','storage','viewer',true],['proof','ledger','viewer',true]];
   }
   if(index===7){
    positions=narrow?{customer:[w/2,45],settlement:[w/2,150],validator:[w/2,255],platform:[w/2,360],receipt:[w/2,485]}:{customer:[w/2,48],settlement:[w/2,180],validator:[left,315],platform:[right,315],receipt:[w/2,465]};

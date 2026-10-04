@@ -58,3 +58,5 @@ body{background:radial-gradient(ellipse at 70% 0,#19303938,transparent 48%),var(
 .auth-logo{display:block;width:160px;height:auto;margin:0 0 28px}.sidebar .account{margin-top:auto;padding-top:24px}
 @media(max-width:1000px) and (min-width:721px){.shell{grid-template-columns:210px minmax(0,1fr)}.sidebar{padding:28px 12px}.sidebar .brand{padding:0 8px}}
 @media(max-width:720px){.shell{display:block}.sidebar{padding:20px 18px;gap:18px}.sidebar .brand{padding:0}.sidebar .astra-logo{width:145px}.workspace-label{margin:0;max-width:240px}.sidebar nav{gap:5px}.topbar{height:auto;min-height:92px;padding:18px 20px;flex-wrap:wrap;gap:18px}.topbar .astra-logo{width:135px}.brand-service{font-size:9px;letter-spacing:1.3px}.navbtn{padding:10px}.worktop{background:transparent}}
+
+.published-file{padding:18px 0;border-bottom:1px solid var(--line)}.published-file:last-child{border-bottom:0}.cid{font:12px/1.7 monospace;overflow-wrap:anywhere;color:var(--mint)}

@@ -1,4 +1,5 @@
 import express from 'express';
+import { ipfsConfigured, ipfsRequest, publicSnapshot } from './ipfs.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { createClient } from '@supabase/supabase-js';
@@ -107,7 +108,7 @@ async function bundle(req, id) {
   return { payload, sha256: digest(payload), publication: 'not_published', signature: null };
 }
 app.get('/healthz', (req, res) => res.json({ status: 'ok' }));
-app.get('/api/config', (req, res) => res.json({ name: 'evidence-validation', supabaseConfigured: !!supabaseUrl && !!anonKey, authentication: 'supabase', feeBps, storage: 'not_connected', payments: 'not_connected', mcp: '/mcp', api: '/api/v1', capabilities: ['drafts', 'pilot_reviews', 'bundle_export', 'scoped_credentials'] }));
+app.get('/api/config', (req, res) => res.json({ name: 'evidence-validation', supabaseConfigured: !!supabaseUrl && !!anonKey, authentication: 'supabase', feeBps, storage: ipfsConfigured ? 'ipfs' : 'not_connected', payments: 'not_connected', mcp: '/mcp', api: '/api/v1', capabilities: ['drafts', 'pilot_reviews', 'bundle_export', 'scoped_credentials'] }));
 app.post('/api/auth/register', async (req, res) => {
   const data = z.object({ email: z.string().email().max(254), name: z.string().trim().min(2).max(100), password: z.string().min(12).max(128) }).strict().parse(req.body);
   const auth = await result(authClient().auth.signUp({ email: data.email, password: data.password, options: { data: { name: data.name }, emailRedirectTo: origin } }));
@@ -155,6 +156,27 @@ app.get('/api/v1/jobs', authenticate, async (req, res) => res.json({ items: awai
 app.post('/api/v1/jobs', authenticate, async (req, res) => res.status(201).json(await createJob(req, req.body)));
 app.post('/api/v1/jobs/:id/reviews', authenticate, async (req, res) => res.status(201).json(await submitReview(req, req.params.id, req.body)));
 app.get('/api/v1/jobs/:id/bundle', authenticate, async (req, res) => res.json(await bundle(req, req.params.id)));
+app.get('/api/storage/status', authenticate, async(req,res)=>{permit(req,'bundles:read');res.json(await ipfsRequest('/status'));});
+app.get('/api/storage/files', authenticate, async(req,res)=>{permit(req,'bundles:read');res.json(await ipfsRequest('/files?owner='+req.principal.user.id));});
+app.post('/api/v1/jobs/:id/publish', authenticate, async(req,res)=>{
+ browserOnly(req);verified(req);
+ z.object({confirmPublic:z.literal(true)}).strict().parse(req.body);
+ const job=await req.db.collection('ev_jobs').getOne(req.params.id);
+ if(job.owner!==req.principal.user.id)throw fail(403,'Only the task owner can publish');
+ if(job.visibility!=='public'||job.status!=='open')throw fail(409,'An operator must open this public task before publication');
+ const exported=await bundle(req,job.id);
+ if(!exported.payload.coverage.completeForThisAccount)throw fail(409,'The review export exceeds the publication limit');
+ const snapshot=publicSnapshot(exported.payload);
+ if(Buffer.byteLength(JSON.stringify(snapshot))>120000)throw fail(413,'This bundle exceeds the pilot publication size limit');
+ res.status(201).json(await ipfsRequest('/publish',{owner:req.principal.user.id,job:job.id,title:job.title,bundle:snapshot}));
+});
+app.get('/api/storage/files/:cid/content', authenticate, async(req,res)=>{
+ permit(req,'bundles:read');const cid=z.string().regex(/^b[a-z2-7]{20,120}$/).parse(req.params.cid);
+ const files=await ipfsRequest('/files?owner='+req.principal.user.id);
+ if(!files.items.some(f=>f.cid===cid))throw fail(404,'Published file not found');
+ const data=await ipfsRequest('/content/'+cid);
+ res.set('Content-Type','application/json').set('Content-Disposition','inline; filename="evidence-'+cid+'.json"').send(data);
+});
 app.get('/api/keys', authenticate, async (req, res) => {
   browserOnly(req);
   const keys = await req.db.collection('ev_api_keys').getList(1, 50, { sort: '-created' });
@@ -181,6 +203,7 @@ app.post('/mcp', authenticate, async (req, res, next) => {
   server.registerTool('create_review_task', { description: 'Create an unfunded draft. Does not publish evidence or spend money. Requires jobs:write.', inputSchema: jobSchema.shape }, input => output(() => createJob(req, input)));
   server.registerTool('submit_evidence_review', { description: 'Submit a review to an open pilot task. No payment is initiated. Requires reviews:write.', inputSchema: { jobId: z.string(), ...reviewSchema.shape } }, ({ jobId, ...input }) => output(() => submitReview(req, jobId, input)));
   server.registerTool('export_evidence_bundle', { description: 'Export accessible evidence with a SHA-256 digest; not an IPFS CID or signed attestation. Requires bundles:read.', inputSchema: { jobId: z.string() } }, ({ jobId }) => output(() => bundle(req, jobId)));
+  server.registerTool('list_published_evidence', {description:'List your real IPFS CIDs and publication records. Requires bundles:read.'},()=>output(async()=>{permit(req,'bundles:read');return ipfsRequest('/files?owner='+req.principal.user.id);}));
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   res.on('close', () => { transport.close(); server.close(); });
   try { await server.connect(transport); await transport.handleRequest(req, res, req.body); } catch (e) { next(e); }

@@ -54,11 +54,15 @@ set -euo pipefail
 exec 9>/run/astra-ipfs-backup.lock
 flock -n 9 || exit 0
 archive=$(mktemp /var/tmp/astra-ipfs-backup.XXXXXX.tar.gz)
-cleanup() { systemctl start astra-ipfs; rm -f "$archive"; }
+cleanup() { systemctl start astra-ipfs; if systemctl cat astra-ipfs-bridge >/dev/null 2>&1; then systemctl start astra-ipfs-bridge; fi; rm -f "$archive"; }
 trap cleanup EXIT
+if systemctl cat astra-ipfs-bridge >/dev/null 2>&1; then systemctl stop astra-ipfs-bridge; fi
 systemctl stop astra-ipfs
-tar --exclude=repo.lock --exclude=api -C /var/lib -czf "$archive" ipfs
+backup_dirs=(ipfs)
+if [ -d /var/lib/ipfs-publications ]; then backup_dirs+=(ipfs-publications); fi
+tar --exclude=repo.lock --exclude=api -C /var/lib -czf "$archive" "${backup_dirs[@]}"
 systemctl start astra-ipfs
+if systemctl cat astra-ipfs-bridge >/dev/null 2>&1; then systemctl start astra-ipfs-bridge; fi
 backup_token=$(curl -fsS -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
 backup_name="node-backups/$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
 curl -fsS --retry 2 -X POST -H "Authorization: Bearer $backup_token" -H 'Content-Type: application/gzip' --data-binary "@$archive" "https://storage.googleapis.com/upload/storage/v1/b/astra-via-ipfs-backups-418893440067/o?uploadType=media&name=$backup_name" > /dev/null
