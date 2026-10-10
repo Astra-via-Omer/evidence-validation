@@ -66,7 +66,8 @@ async function authenticate(req, res, next) {
       let refreshedSession;
       let account = token ? await auth.auth.getUser(token) : { error: true };
       if (account.error && !bearer && cookieToken(req, 'ev_refresh')) {
-        const refreshed = await result(auth.auth.refreshSession({ refresh_token: cookieToken(req, 'ev_refresh') }));
+        const { data: refreshed, error } = await auth.auth.refreshSession({ refresh_token: cookieToken(req, 'ev_refresh') });
+        if (error || !refreshed.session) throw fail(error?.status >= 500 ? 503 : 401, 'Your session expired. Sign in again.', 'AUTHENTICATION_REQUIRED');
         token = refreshed.session.access_token;
         refreshToken = refreshed.session.refresh_token;
         refreshedSession = refreshed.session;

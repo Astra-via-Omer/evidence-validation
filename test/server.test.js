@@ -25,6 +25,7 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
   res.status(401).json({message:'Invalid JWT'});
  });
  upstream.post('/auth/v1/token',(req,res)=>{
+  if(req.body.refresh_token==='expired-refresh')return res.status(400).json({error:'invalid_grant',error_description:'Refresh token has expired'});
   if(req.query.grant_type==='refresh_token')return res.json(session());
   if(req.body.password==='wrong')return res.status(400).json({error:'invalid_grant',error_description:'Incorrect password'});
   return res.json(session());
@@ -69,6 +70,8 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
   assert.equal(config.authentication,'supabase');assert.equal(config.supabaseConfigured,true);assert.equal(JSON.stringify(config).includes('service-key-test'),false);
   assert.equal((await request('/api/me')).status,401);
   assert.equal((await request('/api/me','invalid')).status,401);
+  const expired=await request('/api/me',null,{headers:{Cookie:'ev_refresh=expired-refresh'}});
+  assert.equal(expired.status,401);assert.match(expired.headers.get('set-cookie'),/Expires=Thu, 01 Jan 1970/);
   assert.equal((await request('/api/me','disabled-jwt')).status,403);
   assert.equal((await (await request('/api/me','good-jwt')).json()).user.name,'Existing Astra account');
   assert.equal((await request('/api/v1/jobs',readKey)).status,200);
