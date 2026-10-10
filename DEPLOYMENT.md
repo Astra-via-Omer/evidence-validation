@@ -4,7 +4,7 @@ Application: `evidence-validation` in project `astra-via`, region `me-west1`, ho
 
 ## Existing Supabase setup
 
-1. Apply `supabase/migrations/202610040001_evidence_validation.sql` to the existing project once. The migration is additive; it does not change existing Lab users or tables.
+1. Apply `supabase/migrations/202610040001_evidence_validation.sql` to the existing project once. Then apply `supabase/migrations/202610110001_evidence_access_required.sql` to require current Evidence approval in every evidence RLS policy. These migrations preserve existing Lab users, other systems, and approval values.
 2. Add `https://evidence-validation.astra-via.com` to the existing project's Auth redirect allowlist for verification/recovery emails. Retain existing redirect URLs and email-provider settings.
 3. Reuse `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and existing Secret Manager secret `astra-supabase-service-role`, numeric version 1. Only the Cloud Run runtime identity can read this secret. Do not create another auth service.
 

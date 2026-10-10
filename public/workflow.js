@@ -14,7 +14,7 @@ export function workflowMarkup() {
  <div class="workflow-controls"><button class="btn" id="ev-prev" type="button">Previous step</button><button class="btn primary" id="ev-next" type="button">Next step</button></div>
  </div>
  <p class="workflow-note">Sign in with your existing Astra account. Evidence tasks, independent pilot reviews, and bundle exports are available. Public IPFS publication is available. Ledger proofs and payouts are planned. A ledger preserves provenance and transactions, rather than proving that a claim is true.</p>
- <div class="actions"><button class="textbtn" data-action="demo">Explore a sample task →</button></div>
+ <div class="actions"><button class="textbtn" data-action="login">Log in to review tasks →</button></div>
  </section>`;
 }
 
