@@ -1,4 +1,5 @@
 import express from 'express';
+import { evidenceAccountAllowed } from './access.js';
 import { ipfsConfigured, ipfsRequest, publicSnapshot } from './ipfs.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
@@ -25,12 +26,13 @@ app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], 
 app.use(express.json({ limit: '128kb' }));
 app.use(['/api', '/mcp'], rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false }));
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60000, limit: 25 }));
-const fail = (status, message) => Object.assign(new Error(message), { status });
+const fail = (status, message, code) => Object.assign(new Error(message), { status, code });
 const authClient = () => { if (!supabaseUrl || !anonKey) throw fail(503, 'Supabase is not configured'); return createClient(supabaseUrl, anonKey, { auth: { persistSession: false, autoRefreshToken: false } }); };
 const userView = u => ({ id: u.id, name: u.user_metadata?.name || u.user_metadata?.full_name || u.email, email: u.email, verified: !!u.email_confirmed_at });
 async function result(promise) { const { data, error } = await promise; if (error) throw fail(error.status || 400, 'Supabase operation failed'); return data; }
 function cookieToken(req, name = 'ev_session') { const match = (req.headers.cookie || '').split(';').map(v => v.trim()).find(v => v.startsWith(`${name}=`)); return match ? decodeURIComponent(match.slice(name.length + 1)) : ''; }
 function setCookie(res, session) { const opts = { httpOnly: true, secure, sameSite: 'strict', path: '/' }; res.cookie('ev_session', session.access_token, { ...opts, maxAge: session.expires_in * 1000 }); res.cookie('ev_refresh', session.refresh_token, { ...opts, maxAge: 30 * 86400000 }); }
+function clearCookies(res) { for (const name of ['ev_session', 'ev_refresh']) res.clearCookie(name, { httpOnly: true, secure, sameSite: 'strict', path: '/' }); }
 app.use(['/api', '/mcp'], (req, res, next) => {
   res.set('Cache-Control', 'no-store');
   if (req.headers.origin && req.headers.origin !== origin) return next(fail(403, 'Origin is not allowed'));
@@ -42,11 +44,11 @@ function adminClient() {
   return createClient(supabaseUrl, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 function checkAccount(user) {
-  if (user.app_metadata?.disabled === true || (user.banned_until && Date.parse(user.banned_until) > Date.now())) throw fail(403, 'Your Astra account is disabled');
+  if (!evidenceAccountAllowed(user)) throw fail(403, 'This account needs verified email and administrator approval for Evidence access.', 'EVIDENCE_ACCESS_DENIED');
 }
 async function authenticate(req, res, next) {
+  const bearer = /^Bearer (.+)$/.exec(req.headers.authorization || '')?.[1];
   try {
-    const bearer = /^Bearer (.+)$/.exec(req.headers.authorization || '')?.[1];
     if (bearer?.startsWith('evk_')) {
       const admin = adminClient();
       const { data: key, error } = await admin.from('ev_api_keys').select('*').eq('tokenHash', digest(bearer)).single();
@@ -58,27 +60,33 @@ async function authenticate(req, res, next) {
       req.db = database(admin, user.id);
     } else {
       let token = bearer || cookieToken(req);
-      if (!token && !cookieToken(req, 'ev_refresh')) throw fail(401, 'Sign in to continue');
+      if (!token && !cookieToken(req, 'ev_refresh')) throw fail(401, 'Sign in to continue', 'AUTHENTICATION_REQUIRED');
       const auth = authClient();
       let refreshToken = cookieToken(req, 'ev_refresh');
+      let refreshedSession;
       let account = token ? await auth.auth.getUser(token) : { error: true };
       if (account.error && !bearer && cookieToken(req, 'ev_refresh')) {
-        const refreshed = await result(auth.auth.refreshSession({ refresh_token: cookieToken(req, 'ev_refresh') }));
+        const { data: refreshed, error } = await auth.auth.refreshSession({ refresh_token: cookieToken(req, 'ev_refresh') });
+        if (error || !refreshed.session) throw fail(error?.status >= 500 ? 503 : 401, 'Your session expired. Sign in again.', 'AUTHENTICATION_REQUIRED');
         token = refreshed.session.access_token;
         refreshToken = refreshed.session.refresh_token;
-        setCookie(res, refreshed.session);
+        refreshedSession = refreshed.session;
         account = await auth.auth.getUser(token);
       }
-      if (account.error || !account.data?.user) throw fail(401, 'Sign in to continue');
+      if (account.error || !account.data?.user) throw fail(401, 'Sign in to continue', 'AUTHENTICATION_REQUIRED');
       const user = account.data.user;
       checkAccount(user);
+      if (refreshedSession) setCookie(res, refreshedSession);
       req.principal = { user: userView(user), scopes: null };
       req.accessToken = token; req.refreshToken = refreshToken;
       const db = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: `Bearer ${token}` } }, auth: { persistSession: false, autoRefreshToken: false } });
       req.db = database(db, user.id);
     }
     next();
-  } catch (error) { next(error.status ? error : fail(401, 'Authentication failed')); }
+  } catch (error) {
+    if (!bearer && (cookieToken(req) || cookieToken(req, 'ev_refresh'))) clearCookies(res);
+    next(error.status ? error : fail(401, 'Authentication failed', 'AUTHENTICATION_REQUIRED'));
+  }
 }
 function permit(req, scope) { if (req.principal.scopes && !req.principal.scopes.includes(scope)) throw fail(403, `Credential requires ${scope}`); }
 function browserOnly(req) { if (req.principal.scopes) throw fail(403, 'Manage credentials in your signed-in account'); }
@@ -109,11 +117,7 @@ async function bundle(req, id) {
 }
 app.get('/healthz', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/config', (req, res) => res.json({ name: 'evidence-validation', supabaseConfigured: !!supabaseUrl && !!anonKey, authentication: 'supabase', feeBps, storage: ipfsConfigured ? 'ipfs' : 'not_connected', payments: 'not_connected', mcp: '/mcp', api: '/api/v1', capabilities: ['drafts', 'pilot_reviews', 'bundle_export', 'scoped_credentials'] }));
-app.post('/api/auth/register', async (req, res) => {
-  const data = z.object({ email: z.string().email().max(254), name: z.string().trim().min(2).max(100), password: z.string().min(12).max(128) }).strict().parse(req.body);
-  const auth = await result(authClient().auth.signUp({ email: data.email, password: data.password, options: { data: { name: data.name }, emailRedirectTo: origin } }));
-  res.status(201).json({ message: 'Use your existing Astra account, or check your email to confirm your new account, then sign in.' });
-});
+app.post('/api/auth/register', (req, res) => res.status(403).json({ error: 'Evidence access is managed by your Astra administrator. Ask them to create or approve your account.' }));
 app.post('/api/auth/login', async (req, res) => {
   const data = z.object({ email: z.string().email(), password: z.string().min(1).max(128) }).strict().parse(req.body);
   const { data: auth, error } = await authClient().auth.signInWithPassword(data);
@@ -130,7 +134,7 @@ app.post('/api/auth/logout', async (req, res) => {
     const { error } = await auth.auth.setSession({ access_token, refresh_token });
     if (!error) await auth.auth.signOut({ scope: 'local' });
   }
-  for (const name of ['ev_session', 'ev_refresh']) res.clearCookie(name, { httpOnly: true, secure, sameSite: 'strict', path: '/' }); res.json({ ok: true });
+  clearCookies(res); res.json({ ok: true });
 });
 app.post('/api/auth/reset', async (req, res) => {
   const email = z.string().email().parse(req.body.email);
@@ -210,13 +214,23 @@ app.post('/mcp', authenticate, async (req, res, next) => {
 });
 app.all('/mcp', (req, res) => res.status(405).json({ error: 'Use POST for stateless MCP requests' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Endpoint not found' }));
+app.get('/workspace', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  authenticate(req, res, error => {
+    if (error?.status === 401 || error?.status === 403) return res.redirect('/');
+    if (error) return next(error);
+    try { browserOnly(req); res.sendFile('index.html', { root: fileURLToPath(new URL('../public', import.meta.url)) }); }
+    catch (error) { next(error); }
+  });
+});
 app.get('/how-it-works', (req, res) => res.sendFile('index.html', { root: fileURLToPath(new URL('../public', import.meta.url)) }));
 app.use(express.static(fileURLToPath(new URL('../public', import.meta.url))));
 app.use((error, req, res, next) => {
   if (res.headersSent) return next(error);
+  if (['/api/auth/login', '/api/auth/session'].includes(req.path)) clearCookies(res);
   if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ') });
   const status = Number(error.status) || 500;
-  res.status(status >= 400 && status < 600 ? status : 500).json({ error: status === 500 ? 'Service operation failed' : error.message || 'Request failed' });
+  res.status(status >= 400 && status < 600 ? status : 500).json({ error: status === 500 ? 'Service operation failed' : error.message || 'Request failed', ...(error.code ? { code: error.code } : {}) });
 });
 export { app };
 if (process.argv[1] === fileURLToPath(import.meta.url)) app.listen(Number(process.env.PORT || 3200), '0.0.0.0', () => console.log('evidence-validation listening'));

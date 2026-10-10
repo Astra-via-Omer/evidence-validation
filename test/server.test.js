@@ -10,17 +10,27 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
  const foreign='00000000-0000-4000-8000-000000000002';
  const keyId='00000000-0000-4000-8000-000000000003';
  const readKey='evk_'+ 'a'.repeat(64);
- const user={id:owner,email:'test@example.invalid',email_confirmed_at:new Date().toISOString(),user_metadata:{name:'Existing Astra account'},app_metadata:{}};
+ const user={id:owner,email:'test@example.invalid',email_confirmed_at:new Date().toISOString(),user_metadata:{name:'Existing Astra account'},app_metadata:{system_access:{evidence:true}}};
  const calls=[];
+ const jwt='eyJhbGciOiJIUzI1NiJ9.'+Buffer.from(JSON.stringify({sub:owner,exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.c2lnbmF0dXJl';
+ const session=()=>({access_token:jwt,refresh_token:'test-refresh-token',token_type:'bearer',expires_in:3600,user});
+ let upstreamSignups=0;
  const job={id:keyId,owner,title:'Existing review draft',claim:'An exact and sufficiently long claim',quote:'Exact quotation',sourceUrl:'https://example.org',location:'Page 1',relationship:'supports',visibility:'private',status:'draft',rewardCents:2000,feeBps:1000,created:new Date().toISOString()};
  const upstream=express();upstream.use(express.json());
  upstream.get('/auth/v1/user',(req,res)=>{
   const token=req.headers.authorization;
-  if(token==='Bearer good-jwt')return res.json(user);
+  if(token==='Bearer good-jwt' || token==='Bearer '+jwt)return res.json(user);
   if(token==='Bearer disabled-jwt')return res.json({...user,app_metadata:{disabled:true}});
   if(token==='Bearer unverified-jwt')return res.json({...user,email_confirmed_at:null});
   res.status(401).json({message:'Invalid JWT'});
  });
+ upstream.post('/auth/v1/token',(req,res)=>{
+  if(req.body.refresh_token==='expired-refresh')return res.status(400).json({error:'invalid_grant',error_description:'Refresh token has expired'});
+  if(req.query.grant_type==='refresh_token')return res.json(session());
+  if(req.body.password==='wrong')return res.status(400).json({error:'invalid_grant',error_description:'Incorrect password'});
+  return res.json(session());
+ });
+ upstream.post('/auth/v1/signup',(req,res)=>{upstreamSignups++;res.json(session());});
  upstream.get('/auth/v1/admin/users/:id',(req,res)=>{assert.equal(req.params.id,owner);res.json(user)});
  upstream.all('/rest/v1/:table',(req,res)=>{
   calls.push({table:req.params.table,method:req.method,query:req.query,body:req.body,key:req.headers.apikey});
@@ -60,6 +70,8 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
   assert.equal(config.authentication,'supabase');assert.equal(config.supabaseConfigured,true);assert.equal(JSON.stringify(config).includes('service-key-test'),false);
   assert.equal((await request('/api/me')).status,401);
   assert.equal((await request('/api/me','invalid')).status,401);
+  const expired=await request('/api/me',null,{headers:{Cookie:'ev_refresh=expired-refresh'}});
+  assert.equal(expired.status,401);assert.match(expired.headers.get('set-cookie'),/Expires=Thu, 01 Jan 1970/);
   assert.equal((await request('/api/me','disabled-jwt')).status,403);
   assert.equal((await (await request('/api/me','good-jwt')).json()).user.name,'Existing Astra account');
   assert.equal((await request('/api/v1/jobs',readKey)).status,200);
@@ -77,6 +89,34 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
   assert.equal((await request('/api/auth/logout',null,{method:'POST',headers:{Cookie:'ev_session=good-jwt'},body:'{}'})).status,403);
   const logout=await request('/api/auth/logout',null,{method:'POST',headers:{Cookie:'ev_session=good-jwt',Origin:'http://localhost:3200'},body:'{}'});
   assert.equal(logout.status,200);assert.match(logout.headers.get('set-cookie'),/ev_refresh=/);
+  const login=()=>request('/api/auth/login',null,{method:'POST',body:JSON.stringify({email:user.email,password:'valid-test-password'})});
+  const callback=()=>request('/api/auth/session',null,{method:'POST',body:JSON.stringify({access_token:jwt,refresh_token:'test-refresh-token'})});
+  const registration=await request('/api/auth/register',null,{method:'POST',body:JSON.stringify({email:'new@example.invalid',name:'New user',password:'valid-test-password'})});
+  assert.equal(registration.status,403);assert.equal(upstreamSignups,0,'Public signup never creates a Supabase user');
+  const approvedLogin=await login();assert.equal(approvedLogin.status,200);
+  assert.match(approvedLogin.headers.get('set-cookie'),/HttpOnly/);assert.match(approvedLogin.headers.get('set-cookie'),/SameSite=Strict/);
+  assert.equal((await callback()).status,200);
+  assert.equal((await request('/workspace',null,{redirect:'manual'})).status,302);
+  assert.equal((await request('/workspace',null,{headers:{Cookie:'ev_session=good-jwt'}})).status,200);
+  for(const metadata of [{},{system_access:{evidence:false}},{system_access:{workflow:true}},{system_access:{evidence:'true'}}]){
+   user.app_metadata=metadata;user.user_metadata.system_access={evidence:true};
+   for(const attempt of [login,callback]){
+    const denied=await attempt();assert.equal(denied.status,403);assert.ok(!/Max-Age=3600/.test(denied.headers.get('set-cookie')||''));
+   }
+   const refreshed=await request('/api/me',null,{headers:{Cookie:'ev_refresh=test-refresh-token'}});
+   assert.equal(refreshed.status,403);assert.ok(!/Max-Age=3600/.test(refreshed.headers.get('set-cookie')||''));
+   for(const token of ['good-jwt',readKey]){
+    for(const path of ['/api/me','/api/v1/jobs','/api/keys','/api/storage/files','/api/storage/status'])assert.equal((await request(path,token)).status,403);
+    assert.equal((await request('/mcp',token,{method:'POST',body:'{}'})).status,403);
+   }
+   const revokedCookie=await request('/api/me',null,{headers:{Cookie:'ev_session=good-jwt'}});
+   assert.equal(revokedCookie.status,403);assert.match(revokedCookie.headers.get('set-cookie'),/Expires=Thu, 01 Jan 1970/);
+  }
+  user.app_metadata={system_access:{evidence:true,workflow:false}};
+  assert.equal((await login()).status,200);
+  assert.equal((await request('/api/me',null,{headers:{Cookie:'ev_refresh=test-refresh-token'}})).status,200);
+  user.email_confirmed_at=null;assert.equal((await login()).status,403);assert.equal((await callback()).status,403);
+  user.email_confirmed_at=new Date().toISOString();
   client=new Client({name:'ev-test',version:'1.0.0'});
   await client.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp'),{requestInit:{headers:{Authorization:'Bearer '+readKey}}}));
   assert.equal((await request('/api/v1/jobs/'+keyId+'/publish',readKey,{method:'POST',body:JSON.stringify({confirmPublic:true})})).status,403);

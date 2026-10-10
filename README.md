@@ -12,15 +12,21 @@ cp .env.example .env
 node --env-file=.env src/server.js
 ```
 
-Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` to Astra Lab's existing project configuration. Set the existing server-only `SUPABASE_SERVICE_ROLE_KEY` to enable scoped integration credentials. Never put the service key in browser code or GitHub. Without configuration, sample exploration still works.
+Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` to Astra Lab's existing project configuration. Set the existing server-only `SUPABASE_SERVICE_ROLE_KEY` to enable scoped integration credentials. Never put the service key in browser code or GitHub. The public welcome page and workflow guide remain available; working in the project always requires authentication and Evidence approval.
 
-Apply `supabase/migrations/202610040001_evidence_validation.sql` to the **existing** Supabase project using its SQL editor or migration tooling. It creates only evidence tables, policies, and a verification helper; it references the existing `auth.users`. It does not replace existing users or alter Lab tables. Add the Evidence Validation origin to the existing Supabase Auth redirect allowlist for confirmation and recovery emails. Do not create another Supabase project or authentication server.
+Apply `supabase/migrations/202610040001_evidence_validation.sql` and `supabase/migrations/202610110001_evidence_access_required.sql` to the **existing** Supabase project using its SQL editor or migration tooling. It creates only evidence tables, policies, and a verification helper; it references the existing `auth.users`. It does not replace existing users or alter Lab tables. Add the Evidence Validation origin to the existing Supabase Auth redirect allowlist for confirmation and recovery emails. Do not create another Supabase project or authentication server.
+
+## Access approval
+
+In the existing Supabase Table Editor, open `public.astra_user_system_access` and enable the `evidence` boolean only for an approved account. Its existing trigger mirrors this into protected `app_metadata.system_access.evidence`. Missing approval is denied; user-editable metadata cannot grant access. The account must also have a verified email and must not be disabled, banned, deleted, or anonymous. Revocation blocks existing sessions and API credentials on their next request, and RLS checks current approval for direct database requests.
+
+No existing approval is added or removed by the Evidence migration. Administrators manage new accounts using the existing Astra account process.
 
 ## Pilot features
 
-- Welcome page, responsive workspace, and clearly marked sample evidence.
+- Public welcome page and responsive, authenticated workspace. Public sample mode and self-registration are disabled.
 - Public `/how-it-works` guide with an interactive eight-step claim-to-ledger flow, also available on the welcome page and in workspace navigation. Planned Web3 stages are explicitly labeled.
-- Shared Astra email/password accounts, confirmation/recovery through existing Supabase Auth, HttpOnly access/refresh cookies, and account disablement checks.
+- Shared Astra email/password accounts, confirmation/recovery through existing Supabase Auth, HttpOnly access/refresh cookies, and current per-user Evidence approval checks on login, email-link exchange, refresh, browser/API requests, and MCP.
 - Private immutable drafts, operator-opened public unpaid tasks, one independent review per account/task, and blind reviews visible to their author and task owner.
 - Hashed, scoped API credentials with expiry up to 90 days and revocation. API credentials cannot manage credentials.
 - Restricted REST API and stateless Streamable HTTP MCP using the same permissions.
