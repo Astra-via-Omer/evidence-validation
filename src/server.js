@@ -11,6 +11,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { jobSchema, reviewSchema, keySchema, splitFee, digest } from './contracts.js';
+import { assistanceConfigured, assistanceRequest, assistReview } from './colossus.js';
 
 const app = express();
 const origin = process.env.APP_ORIGIN || 'http://localhost:3200';
@@ -116,7 +117,7 @@ async function bundle(req, id) {
   return { payload, sha256: digest(payload), publication: 'not_published', signature: null };
 }
 app.get('/healthz', (req, res) => res.json({ status: 'ok' }));
-app.get('/api/config', (req, res) => res.json({ name: 'evidence-validation', supabaseConfigured: !!supabaseUrl && !!anonKey, authentication: 'supabase', feeBps, storage: ipfsConfigured ? 'ipfs' : 'not_connected', payments: 'not_connected', mcp: '/mcp', api: '/api/v1', capabilities: ['drafts', 'pilot_reviews', 'bundle_export', 'scoped_credentials'] }));
+app.get('/api/config', (req, res) => res.json({ name: 'evidence-validation', supabaseConfigured: !!supabaseUrl && !!anonKey, aiAssistanceConfigured: assistanceConfigured(), authentication: 'supabase', feeBps, storage: ipfsConfigured ? 'ipfs' : 'not_connected', payments: 'not_connected', mcp: '/mcp', api: '/api/v1', capabilities: ['drafts', 'pilot_reviews', 'bundle_export', 'scoped_credentials', 'optional_ai_assistance'] }));
 app.post('/api/auth/register', (req, res) => res.status(403).json({ error: 'Evidence access is managed by your Astra administrator. Ask them to create or approve your account.' }));
 app.post('/api/auth/login', async (req, res) => {
   const data = z.object({ email: z.string().email(), password: z.string().min(1).max(128) }).strict().parse(req.body);
@@ -159,6 +160,13 @@ app.get('/api/me', authenticate, (req, res) => { const u = req.principal.user; r
 app.get('/api/v1/jobs', authenticate, async (req, res) => res.json({ items: await listJobs(req) }));
 app.post('/api/v1/jobs', authenticate, async (req, res) => res.status(201).json(await createJob(req, req.body)));
 app.post('/api/v1/jobs/:id/reviews', authenticate, async (req, res) => res.status(201).json(await submitReview(req, req.params.id, req.body)));
+app.post('/api/v1/jobs/:id/assist', authenticate, async (req, res) => {
+  browserOnly(req); verified(req);
+  const input = assistanceRequest.parse(req.body);
+  // RLS and explicit visibility checks run again even for an in-memory replay.
+  const job = await req.db.collection('ev_jobs').getOne(req.params.id);
+  res.json(await assistReview({ userId: req.principal.user.id, token: req.accessToken, job, input }));
+});
 app.get('/api/v1/jobs/:id/bundle', authenticate, async (req, res) => res.json(await bundle(req, req.params.id)));
 app.get('/api/storage/status', authenticate, async(req,res)=>{permit(req,'bundles:read');res.json(await ipfsRequest('/status'));});
 app.get('/api/storage/files', authenticate, async(req,res)=>{permit(req,'bundles:read');res.json(await ipfsRequest('/files?owner='+req.principal.user.id));});

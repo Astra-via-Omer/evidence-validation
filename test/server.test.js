@@ -14,9 +14,10 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
  const calls=[];
  const jwt='eyJhbGciOiJIUzI1NiJ9.'+Buffer.from(JSON.stringify({sub:owner,exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.c2lnbmF0dXJl';
  const session=()=>({access_token:jwt,refresh_token:'test-refresh-token',token_type:'bearer',expires_in:3600,user});
- let upstreamSignups=0;
+ let upstreamSignups=0, aiCalls=0;
  const job={id:keyId,owner,title:'Existing review draft',claim:'An exact and sufficiently long claim',quote:'Exact quotation',sourceUrl:'https://example.org',location:'Page 1',relationship:'supports',visibility:'private',status:'draft',rewardCents:2000,feeBps:1000,created:new Date().toISOString()};
  const upstream=express();upstream.use(express.json());
+ upstream.post('/v1/chat/completions',(req,res)=>{aiCalls++;assert.equal(req.headers.authorization,'Bearer good-jwt');assert.equal(req.headers['x-colossus-service-key'],'cs_'+'b'.repeat(64));assert.equal(req.headers['x-colossus-activity'],'evidence.review');res.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({assessment:'The saved quotation needs independent context and validation.',suggestedRelationship:'context',quote:job.quote,questions:['Check the original source context.']})}}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}})});
  upstream.get('/auth/v1/user',(req,res)=>{
   const token=req.headers.authorization;
   if(token==='Bearer good-jwt' || token==='Bearer '+jwt)return res.json(user);
@@ -49,7 +50,7 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
   if(table==='ev_jobs'){
    if(req.method==='GET'){
     assert.equal(req.query.or,`(owner.eq.${owner},and(visibility.eq.public,status.eq.open))`);
-    return req.query.id ? res.json(job) : res.set('Content-Range','0-0/1').json([job]);
+    return req.query.id ? res.json(req.query.id==='eq.'+keyId?job:null) : res.set('Content-Range','0-0/1').json([job]);
    }
    assert.equal(req.body.owner,owner);assert.equal(req.body.status,'draft');return res.status(201).json({...job,...req.body});
   }
@@ -57,6 +58,7 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
  });
  const upstreamServer=upstream.listen(0,'127.0.0.1');await new Promise(r=>upstreamServer.once('listening',r));
  process.env.SUPABASE_URL=`http://127.0.0.1:${upstreamServer.address().port}`;
+ process.env.COLOSSUS_URL=process.env.SUPABASE_URL;process.env.COLOSSUS_SERVICE_KEY='cs_'+'b'.repeat(64);
  process.env.SUPABASE_ANON_KEY='publishable-key-test';
  process.env.SUPABASE_SERVICE_ROLE_KEY='service-key-test';
  process.env.APP_ORIGIN='http://localhost:3200';
@@ -67,6 +69,13 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
  let client;
  try {
   const config=await (await request('/api/config')).json();
+  const assistBody={requestId:'11111111-1111-4111-8111-111111111111',focus:'Check the source'};
+  assert.equal((await request('/api/v1/jobs/'+keyId+'/assist',null,{method:'POST',body:JSON.stringify(assistBody)})).status,401);
+  assert.equal((await request('/api/v1/jobs/'+keyId+'/assist',readKey,{method:'POST',body:JSON.stringify(assistBody)})).status,403);
+  assert.equal((await request('/api/v1/jobs/'+foreign+'/assist','good-jwt',{method:'POST',body:JSON.stringify(assistBody)})).status,404);
+  assert.equal((await request('/api/v1/jobs/'+keyId+'/assist','good-jwt',{method:'POST',body:JSON.stringify({...assistBody,model:'override'})})).status,400);
+  for(let i=0;i<2;i++){const assisted=await request('/api/v1/jobs/'+keyId+'/assist','good-jwt',{method:'POST',body:JSON.stringify(assistBody)});assert.equal(assisted.status,200);assert.equal((await assisted.json()).submitted,false);}
+  assert.equal(aiCalls,1);assert(!calls.some(call=>call.table==='ev_reviews'&&call.method==='POST'));
   assert.equal(config.authentication,'supabase');assert.equal(config.supabaseConfigured,true);assert.equal(JSON.stringify(config).includes('service-key-test'),false);
   assert.equal((await request('/api/me')).status,401);
   assert.equal((await request('/api/me','invalid')).status,401);

@@ -25,3 +25,7 @@ The existing `astra-website-lb` routes `evidence-validation.astra-via.com` to `e
 The redundant identity VM/disk, instance group, backend, health check, firewall rules, backups, certificate, hostname route, deployment/runtime accounts, federation provider, and identity secrets are removed. The identity workflow is disabled and its repository retired. No `identity.astra-via.com` DNS record is required.
 
 Payments and distributed storage remain unconnected. Deployment does not enable funded tasks or payouts.
+
+## Colossus assistant configuration
+
+Deploy Colossus group routing first. Issue a scoped `evidence` system key granting the intended group's chat routes and store it as `astra-evidence-colossus`. Grant the Evidence runtime secret access only on that secret and set numeric repository variable `COLOSSUS_SERVICE_KEY_SECRET_VERSION`; optional `COLOSSUS_URL` defaults to the gateway HTTPS origin. The existing check-and-deploy workflow injects that scoped key server-side. No new database migration or automatic review submission is introduced. Existing human review and IPFS paths keep their account checks. The coordinated Colossus provisioner prepares product secrets, runtime bindings and deployment variables.

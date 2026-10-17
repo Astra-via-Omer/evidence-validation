@@ -56,3 +56,11 @@ This is an unpaid pilot. Payments, escrow, payouts, qualified assignments, dispu
 `npm run check` runs syntax, contract, PostgreSQL RLS isolation, authentication, scoped-API, and MCP tests. SQL tests use an isolated embedded PostgreSQL instance; they never touch production users. `npm audit --omit=dev` checks deployed dependencies.
 
 Google Cloud Run hosts this application using checked images and the existing Google HTTPS load balancer process. See `DEPLOYMENT.md` and `ARCHITECTURE.md`. The redundant identity repository is retired.
+
+## Optional AI review assistance
+
+Open a saved task and choose **Ask AI for review assistance**. The backend sends only the saved claim, quotation, source reference and optional focus to Colossus, using the verified Astra account and a separate scoped Evidence system key. Colossus selects the group's assigned model. The response includes a suggested relationship, an exact source quotation and checks to consider. Invented quotations, malformed output and missing group access fail validation. The source URL is a reference; this action does not fetch it or perform independent research.
+
+The suggestion stays separate from human review submission and is not added to review records, funding or public bundles. Existing Evidence approval and record visibility are checked before every request. Evidence API keys cannot impersonate a user for model calls. Same-request retries are coalesced in memory for five minutes on the current single-instance service; this is not a durable billing ledger. Colossus retains attributed inference usage and rate snapshots.
+
+Set server-only `COLOSSUS_SERVICE_KEY` (scoped to system `evidence`) and optional `COLOSSUS_URL`. Production uses separate Secret Manager secret `astra-evidence-colossus` with repository variable `COLOSSUS_SERVICE_KEY_SECRET_VERSION`. No upstream provider credential is stored in Evidence. AI users need an active Astra application role and an assigned Colossus group; human-review approvals remain separate.

@@ -115,9 +115,11 @@ jobs:
             APP_ORIGIN=${{ vars.APP_ORIGIN }}
             SUPABASE_URL=${{ vars.SUPABASE_URL }}
             SUPABASE_ANON_KEY=${{ vars.SUPABASE_ANON_KEY }}
+            COLOSSUS_URL=${{ vars.COLOSSUS_URL || 'https://colossus.astra-via.com' }}
             PLATFORM_FEE_BPS=1000
             TRUST_PROXY_HOPS=1
             IPFS_BRIDGE_URL=http://10.21.0.2:8787
           secrets: |
             SUPABASE_SERVICE_ROLE_KEY=astra-supabase-service-role:${{ vars.SUPABASE_ADMIN_SECRET_VERSION }}
+            COLOSSUS_SERVICE_KEY=astra-evidence-colossus:${{ vars.COLOSSUS_SERVICE_KEY_SECRET_VERSION }}
             IPFS_BRIDGE_TOKEN=evidence-ipfs-bridge-token:1

@@ -81,3 +81,27 @@ test('denied email-link exchange strips tokens and leaves the workspace closed',
     assert.match(dom.window.document.querySelector('#notice').textContent, /administrator approval/);
   } finally { dom.window.close(); }
 });
+
+test('AI assistance is explicit, escapes model text and never submits a human review', async () => {
+ let signedIn=false, aiCalls=0;const requests=[];
+ const dom=await browser(async(path,options)=>{
+  requests.push(path);
+  if(path==='/api/me')return signedIn?response(200,{user}):response(401,{error:'Sign in'});
+  if(path==='/api/auth/login'){signedIn=true;return response(200,{user});}
+  if(path==='/api/v1/jobs')return response(200,{items:[job]});
+  if(path==='/api/v1/jobs/'+job.id+'/assist'){
+   aiCalls++;const sent=JSON.parse(options.body);assert.equal(typeof sent.requestId,'string');assert.equal(sent.focus,'Check the scope');assert.deepEqual(Object.keys(sent).sort(),['focus','requestId']);
+   return response(200,{assessment:'<img src=x onerror=alert(1)> is untrusted model text.',suggestedRelationship:'context',quote:'Quoted evidence',questions:['Check primary measurements.'],submitted:false});
+  }
+  throw Error('Unexpected request: '+path);
+ });
+ try{
+  await login(dom);assert.equal(aiCalls,0);
+  dom.window.document.querySelector('[data-task]').click();await flush();
+  dom.window.document.querySelector('[data-assist]').click();await flush();assert.equal(aiCalls,0);
+  const form=dom.window.document.querySelector('#assist-form');form.elements.focus.value='Check the scope';
+  await form.onsubmit({preventDefault(){},target:form});
+  const result=dom.window.document.querySelector('#assist-result');assert.match(result.textContent,/No review was submitted/);assert.equal(result.querySelector('img'),null);assert.equal(aiCalls,1);
+  assert.equal(requests.some(path=>path.endsWith('/reviews')),false);
+ }finally{dom.window.close();}
+});
