@@ -29,3 +29,11 @@ test('invalid gateway credentials and client model overrides are rejected before
  request.input={requestId:randomUUID()};process.env.COLOSSUS_SERVICE_KEY='direct-provider-key';await assert.rejects(assistReview(request,fetcher),{status:503});
  process.env.COLOSSUS_SERVICE_KEY='cs_'+'b'.repeat(64);process.env.COLOSSUS_URL='https://username:secret@gateway.example';await assert.rejects(assistReview(request,fetcher),{status:503});assert.equal(calls,0);
 });
+
+test('shared credit denials remain actionable and never become AI review output',async()=>{
+ process.env.COLOSSUS_SERVICE_KEY='cs_'+'b'.repeat(64);process.env.COLOSSUS_URL='https://gateway.example';
+ for(const [code,status] of [['insufficient_credits',402],['credits_paused',403],['account_inactive',403],['credit_account_required',409],['credit_price_required',409],['credits_unavailable',503]]) {
+  const request={userId:'alice',token:'account',job,input:{requestId:randomUUID()}};
+  await assert.rejects(assistReview(request,async()=>Response.json({error:{code}},{status})),error=>error.status===status);
+ }
+});
