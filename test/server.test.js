@@ -10,7 +10,7 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
  const foreign='00000000-0000-4000-8000-000000000002';
  const keyId='00000000-0000-4000-8000-000000000003';
  const readKey='evk_'+ 'a'.repeat(64);
- const user={id:owner,email:'test@example.invalid',email_confirmed_at:new Date().toISOString(),user_metadata:{name:'Existing Astra account'},app_metadata:{system_access:{evidence:true}}};
+ const user={id:owner,email:'test@example.invalid',email_confirmed_at:new Date().toISOString(),user_metadata:{name:'Existing Astra account'},app_metadata:{astra_entitlement: {version:1,kind:'subscription',enabled:true,expiresAt:'2099-12-31T00:00:00.000Z'}, system_access:{evidence:true}}};
  const calls=[];
  const jwt='eyJhbGciOiJIUzI1NiJ9.'+Buffer.from(JSON.stringify({sub:owner,exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.c2lnbmF0dXJl';
  const session=()=>({access_token:jwt,refresh_token:'test-refresh-token',token_type:'bearer',expires_in:3600,user});
@@ -21,7 +21,7 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
  upstream.get('/auth/v1/user',(req,res)=>{
   const token=req.headers.authorization;
   if(token==='Bearer good-jwt' || token==='Bearer '+jwt)return res.json(user);
-  if(token==='Bearer disabled-jwt')return res.json({...user,app_metadata:{disabled:true}});
+  if(token==='Bearer disabled-jwt')return res.json({...user,app_metadata:{astra_entitlement: {version:1,kind:'subscription',enabled:true,expiresAt:'2099-12-31T00:00:00.000Z'}, disabled:true}});
   if(token==='Bearer unverified-jwt')return res.json({...user,email_confirmed_at:null});
   res.status(401).json({message:'Invalid JWT'});
  });
@@ -121,7 +121,7 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
    const revokedCookie=await request('/api/me',null,{headers:{Cookie:'ev_session=good-jwt'}});
    assert.equal(revokedCookie.status,403);assert.match(revokedCookie.headers.get('set-cookie'),/Expires=Thu, 01 Jan 1970/);
   }
-  user.app_metadata={system_access:{evidence:true,workflow:false}};
+  user.app_metadata={astra_entitlement: {version:1,kind:'subscription',enabled:true,expiresAt:'2099-12-31T00:00:00.000Z'}, system_access:{evidence:true,workflow:false}};
   assert.equal((await login()).status,200);
   assert.equal((await request('/api/me',null,{headers:{Cookie:'ev_refresh=test-refresh-token'}})).status,200);
   user.email_confirmed_at=null;assert.equal((await login()).status,403);assert.equal((await callback()).status,403);

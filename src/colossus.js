@@ -47,6 +47,9 @@ export async function assistReview({ userId, token, job, input }, fetcher = fetc
     } catch { throw fail(503, 'Colossus could not confirm this AI review. Retry the same request to check its status.'); }
     const data = await responseJSON(response);
     if (!response.ok) {
+      if (data?.error?.code === 'insufficient_credits') throw fail(402, 'Your Astra credit balance is too low for AI review assistance.');
+      if (['credits_paused', 'account_inactive', 'entitlement_inactive'].includes(data?.error?.code)) throw fail(403, 'AI computations are paused, this account is inactive, or its trial/subscription has expired.');
+      if (['credit_account_required', 'credit_price_required', 'credit_reservation_required'].includes(data?.error?.code)) throw fail(409, 'An administrator must configure your Astra computation credits before AI review assistance can run.');
       if (data?.error?.code === 'group_required') throw fail(409, 'An administrator must assign your account to a Colossus user group.');
       if (['group_paused', 'organization_denied', 'access_denied'].includes(data?.error?.code)) throw fail(403, 'Your account or Colossus group does not currently allow AI review assistance.');
       throw fail(response.status === 429 ? 429 : 503, 'The Colossus review service is unavailable. Contact an administrator if this continues.');
