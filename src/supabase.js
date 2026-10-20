@@ -4,6 +4,7 @@ export function database(client, owner) {
   function visible(query, table) {
     if (table === 'ev_jobs') return query.or(`owner.eq.${owner},and(visibility.eq.public,status.eq.open)`);
     if (table === 'ev_api_keys') return query.eq('owner', owner);
+    if (table === 'ev_cases') return query.eq('owner', owner);
     if (table === 'ev_reviews') return query.or(`reviewer.eq.${owner},taskOwner.eq.${owner}`);
     throw new Error('Unknown evidence table');
   }
@@ -28,7 +29,7 @@ export function database(client, owner) {
       },
       async create(input) {
         const data = { ...input };
-        if (table === 'ev_jobs' || table === 'ev_api_keys') data.owner = owner;
+        if (table === 'ev_jobs' || table === 'ev_api_keys' || table === 'ev_cases') data.owner = owner;
         if (table === 'ev_reviews') {
           const job = await db.collection('ev_jobs').getOne(data.job);
           if (job.owner === owner || job.status !== 'open' || job.visibility !== 'public') throw Object.assign(new Error('Task is not available for independent review'), { status: 403 });
@@ -37,6 +38,11 @@ export function database(client, owner) {
         return (await read(client.from(table).insert(data).select('*').single())).data;
       },
       async update(id, input) {
+        if (table === 'ev_cases') {
+          const { data } = await read(client.from(table).update({ document: input.document, revision: input.revision + 1 }).eq('id', id).eq('owner', owner).eq('revision', input.revision).select('*').maybeSingle());
+          if (!data) throw Object.assign(new Error('This case changed in another session. Reload the saved case before editing again.'), { status: 409 });
+          return data;
+        }
         if (table !== 'ev_api_keys' || input.revoked !== true) throw Object.assign(new Error('Update not permitted'), { status: 403 });
         return (await read(client.from(table).update({ revoked: true }).eq('id', id).eq('owner', owner).select('id').single())).data;
       }

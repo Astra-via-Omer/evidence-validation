@@ -32,6 +32,16 @@ No existing approval is added or removed by the Evidence migration. Administrato
 - Restricted REST API and stateless Streamable HTTP MCP using the same permissions.
 - Deterministic JSON bundles with SHA-256 digests, and proposed integer-cent fee splits (default Astra-Via fee: 10%).
 
+## Investigation cases and lawyer meetings
+
+**Police investigation** opens a private case board. Pin accessible evidence-review tasks, add person/organization, event and note cards, arrange them by dragging or with arrow keys, and connect cards using supporting, challenging, contextual or open-question relationships. The detail panel keeps the exact source quotation, reference and accessible independent reviews together. Investigator annotations and board connections are working assessments and never alter submitted review verdicts.
+
+**Lawyer meeting prep** uses the same case and pinned exhibits for a meeting title, local date/time, participants, objective, agenda, questions, notes and next actions. Export a private text brief with source quotations and references; independent review submissions are inspected separately. Use **Save case** to persist both views; unsaved work stays in the current tab. Case switches and page exits warn about unsaved changes. Concurrent stale saves return a conflict rather than overwriting another session.
+
+Apply `supabase/migrations/202610210001_investigation_cases.sql` to the existing Supabase project before releasing these views. Cases use a separate owner-only `ev_cases` table, current Evidence approval checks and RLS. The browser-session endpoints are `GET/POST /api/cases` and `PUT /api/cases/:id`; integration credentials and MCP cannot access them. Missing storage produces an explicit error and does not claim a case was saved. The pilot lists the latest 50 cases and supports 80 cards, 160 connections, 60 meeting questions and a 100 KB case document. Evidence must still be accessible when saving.
+
+**Rewards & fees** retains its fee quote and reviewer allocation, adds totals for the signed-in owner's loaded task budgets, and connects investigation, independent review, bundle export and hosted IPFS publication to the planned ledger-attestation and settlement stages. Amounts remain unfunded USD quotes; no chain, wallet, escrow, acceptance contract or payout provider is added. Case files and meeting notes are excluded from public bundles and IPFS publication.
+
 ## API and MCP
 
 Accepts `Authorization: Bearer <existing Supabase access token or evk_ credential>`. Browser requests use HttpOnly cookies and must come from `APP_ORIGIN`.

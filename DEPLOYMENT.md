@@ -7,6 +7,7 @@ Application: `evidence-validation` in project `astra-via`, region `me-west1`, ho
 1. Apply `supabase/migrations/202610040001_evidence_validation.sql` to the existing project once. Then apply `supabase/migrations/202610110001_evidence_access_required.sql` to require current Evidence approval in every evidence RLS policy. These migrations preserve existing Lab users, other systems, and approval values.
 2. Add `https://evidence-validation.astra-via.com` to the existing project's Auth redirect allowlist for verification/recovery emails. Retain existing redirect URLs and email-provider settings.
 3. Reuse `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and existing Secret Manager secret `astra-supabase-service-role`, numeric version 1. Only the Cloud Run runtime identity can read this secret. Do not create another auth service.
+4. Before deploying investigation boards and lawyer meeting preparation, apply `supabase/migrations/202610210001_investigation_cases.sql` to this same project. It adds an owner-only case table, current-account RLS and a revision trigger; it does not change evidence jobs, immutable reviews, fees, other products or their approvals. Run `npm run check` first; the migration is exercised against isolated PostgreSQL. No new secret or wallet configuration is required. If this migration is absent, the UI reports unavailable case storage and leaves changes unsaved.
 
 ## GitHub pipeline
 
