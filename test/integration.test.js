@@ -14,6 +14,7 @@ test('Supabase migration enforces shared-account RLS, blind reviews, and secret 
   `);
   await db.exec(await readFile(new URL('../supabase/migrations/202610040001_evidence_validation.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../supabase/migrations/202610110001_evidence_access_required.sql', import.meta.url), 'utf8'));
+  await db.exec(await readFile(new URL('../supabase/migrations/202610210001_investigation_cases.sql', import.meta.url), 'utf8'));
   const owner = '00000000-0000-4000-8000-000000000001', reviewer = '00000000-0000-4000-8000-000000000002', third = '00000000-0000-4000-8000-000000000003', unverified = '00000000-0000-4000-8000-000000000004';
   await db.exec(`insert into auth.users(id,email_confirmed_at,raw_app_meta_data) values ('${owner}',now(),'{"system_access":{"evidence":true}}'),('${reviewer}',now(),'{"system_access":{"evidence":true}}'),('${third}',now(),'{"system_access":{"evidence":true}}'),('${unverified}',null,'{"system_access":{"evidence":true}}');`);
   const jobData = { title:'Validate this claim',claim:'A sufficiently long claim',quote:'An exact excerpt',sourceUrl:'https://example.org',location:'Page 2',relationship:'supports',rewardCents:2000,feeBps:1000,visibility:'public',status:'draft' };
@@ -38,6 +39,16 @@ test('Supabase migration enforces shared-account RLS, blind reviews, and secret 
   await assert.rejects(db.query(`insert into public.ev_reviews(${reviewColumns}) values(${reviewValues.replace(reviewer,third).replace(owner,third)})`),'Forged task owner must fail');
   await as(owner);
   assert.equal((await db.query('select * from public.ev_reviews')).rows.length,1);
+  const caseId = (await db.query(`insert into public.ev_cases(owner,document) values ('${owner}','{"title":"Private case"}') returning id`)).rows[0].id;
+  await db.query(`update public.ev_cases set document='{"title":"Updated private case"}',revision=2 where id='${caseId}' and revision=1`);
+  assert.equal((await db.query(`update public.ev_cases set document='{"title":"Stale"}',revision=2 where id='${caseId}' and revision=1 returning id`)).rows.length, 0, 'Stale saves cannot overwrite a newer revision');
+  await assert.rejects(db.query(`update public.ev_cases set revision=4 where id='${caseId}'`), 'Revision jumps are rejected');
+  await assert.rejects(db.query(`update public.ev_cases set owner='${reviewer}' where id='${caseId}'`), 'Case ownership cannot be changed');
+  await as(reviewer);
+  assert.equal((await db.query('select * from public.ev_cases')).rows.length, 0, 'Other reviewers cannot read private cases');
+  assert.equal((await db.query(`update public.ev_cases set document='{}',revision=3 where id='${caseId}' returning id`)).rows.length, 0);
+  await assert.rejects(db.query(`insert into public.ev_cases(owner,document) values ('${owner}','{}')`), 'A different owner cannot be forged');
+  await as(owner);
   await assert.rejects(db.query(`insert into public.ev_reviews(${reviewColumns}) values(${reviewValues.replace(reviewer,owner)})`),'Owner self-review must fail');
   await as(unverified);
   assert.equal((await db.query('select * from public.ev_jobs')).rows.length,0);
@@ -54,6 +65,7 @@ test('Supabase migration enforces shared-account RLS, blind reviews, and secret 
    await as(owner);
    assert.equal((await db.query('select * from public.ev_jobs')).rows.length,0,'Current approval is required even for an existing JWT');
    assert.equal((await db.query('select * from public.ev_reviews')).rows.length,0);
+   assert.equal((await db.query('select * from public.ev_cases')).rows.length,0, 'Revocation also hides private investigation and meeting data');
    assert.equal((await db.query('select id from public.ev_api_keys')).rows.length,0);
    await assert.rejects(db.query(`insert into public.ev_jobs(owner,${columns}) values('${owner}',${values})`));
   }
@@ -61,6 +73,6 @@ test('Supabase migration enforces shared-account RLS, blind reviews, and secret 
   await as(owner);
   assert.equal((await db.query('select * from public.ev_jobs')).rows.length,1,'Approval can restore access without changing the JWT');
   await db.exec('reset role; set role anon;');
-  for(const table of ['ev_jobs','ev_reviews','ev_api_keys'])await assert.rejects(db.query(`select id from public.${table}`));
+  for(const table of ['ev_jobs','ev_reviews','ev_api_keys','ev_cases'])await assert.rejects(db.query(`select id from public.${table}`));
  } finally { await db.close(); }
 });

@@ -12,6 +12,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { jobSchema, reviewSchema, keySchema, splitFee, digest } from './contracts.js';
 import { assistanceConfigured, assistanceRequest, assistReview } from './colossus.js';
+import { caseRoutes } from './cases.js';
 
 const app = express();
 const origin = process.env.APP_ORIGIN || 'http://localhost:3200';
@@ -157,6 +158,7 @@ app.post('/api/auth/password', authenticate, async (req, res) => {
   res.json({ message: 'Your Astra account password has been updated.' });
 });
 app.get('/api/me', authenticate, (req, res) => { const u = req.principal.user; res.json({ user: { id: u.id, name: u.name, email: u.email, verified: u.verified } }); });
+caseRoutes(app, { authenticate, browserOnly, verified });
 app.get('/api/v1/jobs', authenticate, async (req, res) => res.json({ items: await listJobs(req) }));
 app.post('/api/v1/jobs', authenticate, async (req, res) => res.status(201).json(await createJob(req, req.body)));
 app.post('/api/v1/jobs/:id/reviews', authenticate, async (req, res) => res.status(201).json(await submitReview(req, req.params.id, req.body)));

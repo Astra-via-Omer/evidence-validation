@@ -14,7 +14,7 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
  const calls=[];
  const jwt='eyJhbGciOiJIUzI1NiJ9.'+Buffer.from(JSON.stringify({sub:owner,exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.c2lnbmF0dXJl';
  const session=()=>({access_token:jwt,refresh_token:'test-refresh-token',token_type:'bearer',expires_in:3600,user});
- let upstreamSignups=0, aiCalls=0;
+ let upstreamSignups=0, aiCalls=0, caseRecord=null;
  const job={id:keyId,owner,title:'Existing review draft',claim:'An exact and sufficiently long claim',quote:'Exact quotation',sourceUrl:'https://example.org',location:'Page 1',relationship:'supports',visibility:'private',status:'draft',rewardCents:2000,feeBps:1000,created:new Date().toISOString()};
  const upstream=express();upstream.use(express.json());
  upstream.post('/v1/chat/completions',(req,res)=>{aiCalls++;assert.equal(req.headers.authorization,'Bearer good-jwt');assert.equal(req.headers['x-colossus-service-key'],'cs_'+'b'.repeat(64));assert.equal(req.headers['x-colossus-activity'],'evidence.review');res.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({assessment:'The saved quotation needs independent context and validation.',suggestedRelationship:'context',quote:job.quote,questions:['Check the original source context.']})}}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}})});
@@ -36,6 +36,15 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
  upstream.all('/rest/v1/:table',(req,res)=>{
   calls.push({table:req.params.table,method:req.method,query:req.query,body:req.body,key:req.headers.apikey});
   const table=req.params.table;
+  if(table==='ev_cases'){
+   if(req.method!=='POST')assert.equal(req.query.owner,'eq.'+owner);
+   if(req.method==='GET')return res.set('Content-Range',caseRecord?'0-0/1':'*/0').json(caseRecord?[caseRecord]:[]);
+   if(req.method==='POST'){assert.equal(req.body.owner,owner);caseRecord={id:'44444444-4444-4444-8444-444444444444',...req.body};return res.status(201).json(caseRecord);}
+   if(req.method==='PATCH'){
+    if(req.query.id!=='eq.'+caseRecord.id||req.query.revision!=='eq.'+caseRecord.revision)return res.json(null);
+    caseRecord={...caseRecord,...req.body};return res.json(caseRecord);
+   }
+  }
   if(table==='ev_api_keys' && req.query.tokenHash){
    assert.equal(req.headers.apikey,'service-key-test');
    if(req.query.tokenHash==='eq.'+digest(readKey))return res.json({id:keyId,owner,scopes:['jobs:read'],revoked:false,expiresAt:new Date(Date.now()+86400000).toISOString()});
@@ -78,6 +87,19 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
   assert.equal(aiCalls,1);assert(!calls.some(call=>call.table==='ev_reviews'&&call.method==='POST'));
   assert.equal(config.authentication,'supabase');assert.equal(config.supabaseConfigured,true);assert.equal(JSON.stringify(config).includes('service-key-test'),false);
   assert.equal((await request('/api/me')).status,401);
+  assert.equal((await request('/api/cases')).status,401);
+  assert.equal((await request('/api/cases',readKey)).status,403,'Integration keys cannot read investigation notes');
+  const caseDocument={title:'Private investigation',reference:'CASE-01',summary:'',nodes:[],links:[],meeting:{title:'Counsel review',date:'',participants:'',objective:'Review original records',agenda:'',notes:'Private working notes',questions:[]}};
+  const caseBody={document:caseDocument,revision:0};
+  const createdCase=await request('/api/cases','good-jwt',{method:'POST',body:JSON.stringify(caseBody)});
+  assert.equal(createdCase.status,201);const caseId=(await createdCase.json()).id;
+  assert.equal((await (await request('/api/cases','good-jwt')).json()).items.length,1);
+  assert.equal((await request('/api/cases/'+caseId,'good-jwt',{method:'PUT',body:JSON.stringify({...caseBody,revision:1})})).status,200);
+  assert.equal((await request('/api/cases/'+caseId,'good-jwt',{method:'PUT',body:JSON.stringify({...caseBody,revision:1})})).status,409,'Stale saves must not overwrite newer work');
+  assert.equal((await request('/api/cases/'+foreign,'good-jwt',{method:'PUT',body:JSON.stringify({...caseBody,revision:2})})).status,409);
+  assert.equal((await request('/api/cases','good-jwt',{method:'POST',body:JSON.stringify({...caseBody,owner:foreign})})).status,400);
+  const invalidSource={...caseBody,document:{...caseDocument,nodes:[{id:foreign,kind:'evidence',title:'Foreign task',body:'',jobId:foreign,x:10,y:20}]}};
+  assert.equal((await request('/api/cases','good-jwt',{method:'POST',body:JSON.stringify(invalidSource)})).status,404,'Inaccessible evidence cannot be pinned through the API');
   assert.equal((await request('/api/me','invalid')).status,401);
   const expired=await request('/api/me',null,{headers:{Cookie:'ev_refresh=expired-refresh'}});
   assert.equal(expired.status,401);assert.match(expired.headers.get('set-cookie'),/Expires=Thu, 01 Jan 1970/);
@@ -88,7 +110,7 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
   assert.equal((await request('/api/v1/jobs',readKey,{method:'POST',body:JSON.stringify(job)})).status,403);
   assert.equal((await request('/api/keys',readKey,{method:'POST',body:'{}'})).status,403);
   assert.equal((await request('/api/keys/'+foreign,'good-jwt',{method:'DELETE'})).status,404);
-  assert.equal(calls.some(c=>c.method==='PATCH'),false,'Foreign keys cannot be revoked');
+  assert.equal(calls.some(c=>c.method==='PATCH'&&c.table==='ev_api_keys'),false,'Foreign keys cannot be revoked');
   assert.equal((await request('/api/keys','good-jwt')).status,200);
   const input={title:job.title,claim:job.claim,quote:job.quote,sourceUrl:job.sourceUrl,location:job.location,relationship:job.relationship,rewardCents:job.rewardCents};
   assert.equal((await request('/api/v1/jobs','unverified-jwt',{method:'POST',body:JSON.stringify(input)})).status,403);
@@ -115,7 +137,7 @@ test('shared Supabase auth, scoped keys, browser secret isolation, and real MCP 
    const refreshed=await request('/api/me',null,{headers:{Cookie:'ev_refresh=test-refresh-token'}});
    assert.equal(refreshed.status,403);assert.ok(!/Max-Age=3600/.test(refreshed.headers.get('set-cookie')||''));
    for(const token of ['good-jwt',readKey]){
-    for(const path of ['/api/me','/api/v1/jobs','/api/keys','/api/storage/files','/api/storage/status'])assert.equal((await request(path,token)).status,403);
+    for(const path of ['/api/me','/api/v1/jobs','/api/keys','/api/cases','/api/storage/files','/api/storage/status'])assert.equal((await request(path,token)).status,403);
     assert.equal((await request('/mcp',token,{method:'POST',body:'{}'})).status,403);
    }
    const revokedCookie=await request('/api/me',null,{headers:{Cookie:'ev_session=good-jwt'}});
