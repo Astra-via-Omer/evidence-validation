@@ -1,5 +1,6 @@
 import express from 'express';
 import { evidenceAccountAllowed } from './access.js';
+import {accountUpdates,accountUpdateHeaders} from './account-events/account-events.mjs';
 import { ipfsConfigured, ipfsRequest, publicSnapshot } from './ipfs.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
@@ -158,6 +159,13 @@ app.post('/api/auth/password', authenticate, async (req, res) => {
   res.json({ message: 'Your Astra account password has been updated.' });
 });
 app.get('/api/me', authenticate, (req, res) => { const u = req.principal.user; res.json({ user: { id: u.id, name: u.name, email: u.email, verified: u.verified } }); });
+app.route('/api/account-events').get(authenticate,async(req,res)=>{
+  browserOnly(req);res.set(accountUpdateHeaders);
+  res.json(await accountUpdates({url:supabaseUrl,anonKey,token:req.accessToken,product:'evidence'}));
+}).post(authenticate,async(req,res)=>{
+  browserOnly(req);if(JSON.stringify(req.body).length>4096)throw fail(413,'Account update preferences are too large.');
+  res.set(accountUpdateHeaders);res.json(await accountUpdates({url:supabaseUrl,anonKey,token:req.accessToken,product:'evidence'},req.body));
+});
 caseRoutes(app, { authenticate, browserOnly, verified });
 app.get('/api/v1/jobs', authenticate, async (req, res) => res.json({ items: await listJobs(req) }));
 app.post('/api/v1/jobs', authenticate, async (req, res) => res.status(201).json(await createJob(req, req.body)));
